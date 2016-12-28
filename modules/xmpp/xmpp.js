@@ -276,11 +276,6 @@ export default class XMPP extends Listenable {
             // node of the anonymous JID is very long - here we trim it a bit
             mucNickname = mucNickname.substr(0, 8);
         }
-        // Constant JIDs need some random part to be appended in order to be
-        // able to join the MUC more than once.
-        if (this.authenticatedUser || cfgNickname != null) {
-            mucNickname += "-" + RandomUtil.randomHexString(6);
-        }
 
         roomjid += mucNickname;
 
