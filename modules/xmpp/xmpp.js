@@ -2,7 +2,6 @@
 
 import { getLogger } from "jitsi-meet-logger";
 const logger = getLogger(__filename);
-import RandomUtil from "../util/RandomUtil";
 import * as JitsiConnectionErrors from "../../JitsiConnectionErrors";
 import * as JitsiConnectionEvents from "../../JitsiConnectionEvents";
 import RTCBrowserType from "../RTC/RTCBrowserType";
