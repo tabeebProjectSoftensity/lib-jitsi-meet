@@ -3,10 +3,10 @@
 import { getLogger } from "jitsi-meet-logger";
 const logger = getLogger(__filename);
 import SdpConsistency from "./SdpConsistency.js";
+import RtxModifier from "./RtxModifier.js";
 var RTCBrowserType = require("../RTC/RTCBrowserType.js");
 var XMPPEvents = require("../../service/xmpp/XMPPEvents");
 var transform = require('sdp-transform');
-var RandomUtil = require('../util/RandomUtil');
 var SDP = require("./SDP");
 var SDPUtil = require("./SDPUtil");
 
@@ -34,6 +34,7 @@ function TraceablePeerConnection(ice_config, constraints, session) {
     this.simulcast = new Simulcast({numOfLayers: SIMULCAST_LAYERS,
         explodeRemoteSimulcast: false});
     this.sdpConsistency = new SdpConsistency();
+    this.rtxModifier = new RtxModifier();
     this.eventEmitter = this.session.room.eventEmitter;
 
     // override as desired
@@ -317,7 +318,29 @@ TraceablePeerConnection.prototype.addStream = function (stream, ssrcInfo) {
         this.peerconnection.addStream(stream);
     if (ssrcInfo && ssrcInfo.type === "addMuted") {
         this.sdpConsistency.setPrimarySsrc(ssrcInfo.ssrc.ssrcs[0]);
-        this.simulcast.setSsrcCache(ssrcInfo.ssrc.ssrcs);
+        const simGroup = 
+            ssrcInfo.ssrc.groups.find(groupInfo => {
+                return groupInfo.group.semantics === "SIM";
+            });
+        if (simGroup) {
+            const simSsrcs = SDPUtil.parseGroupSsrcs(simGroup.group);
+            this.simulcast.setSsrcCache(simSsrcs);
+        }
+        const fidGroups =
+            ssrcInfo.ssrc.groups.filter(groupInfo => {
+                return groupInfo.group.semantics === "FID";
+            });
+        if (fidGroups) {
+            const rtxSsrcMapping = new Map();
+            fidGroups.forEach(fidGroup => {
+                const fidGroupSsrcs = 
+                    SDPUtil.parseGroupSsrcs(fidGroup.group);
+                const primarySsrc = fidGroupSsrcs[0];
+                const rtxSsrc = fidGroupSsrcs[1];
+                rtxSsrcMapping.set(primarySsrc, rtxSsrc);
+            });
+            this.rtxModifier.setSsrcCache(rtxSsrcMapping);
+        }
     }
 };
 
@@ -366,8 +389,17 @@ TraceablePeerConnection.prototype.setRemoteDescription
     description = this.simulcast.mungeRemoteDescription(description);
     this.trace('setRemoteDescription::postTransform (simulcast)', dumpSDP(description));
 
+    if (this.session.room.options.preferH264) {
+        const parsedSdp = transform.parse(description.sdp);
+        const videoMLine = parsedSdp.media.find(m => m.type === "video");
+        SDPUtil.preferVideoCodec(videoMLine, "h264");
+        description.sdp = transform.write(parsedSdp);
+    }
+
     // if we're running on FF, transform to Plan A first.
     if (RTCBrowserType.usesUnifiedPlan()) {
+        description.sdp = this.rtxModifier.stripRtx(description.sdp);
+        this.trace('setRemoteDescription::postTransform (stripRtx)', dumpSDP(description));
         description = this.interop.toUnifiedPlan(description);
         this.trace('setRemoteDescription::postTransform (Plan A)', dumpSDP(description));
     }
@@ -394,6 +426,18 @@ TraceablePeerConnection.prototype.setRemoteDescription
      // start gathering stats
      }
      */
+};
+
+/**
+ * Makes the underlying TraceablePeerConnection generate new SSRC for
+ * the recvonly video stream.
+ * @deprecated
+ */
+TraceablePeerConnection.prototype.generateRecvonlySsrc = function() {
+    // FIXME replace with SDPUtil.generateSsrc (when it's added)
+    const newSSRC = this.generateNewStreamSSRCInfo().ssrcs[0];
+    logger.info("Generated new recvonly SSRC: " + newSSRC);
+    this.sdpConsistency.setPrimarySsrc(newSSRC);
 };
 
 TraceablePeerConnection.prototype.close = function () {
@@ -503,6 +547,13 @@ TraceablePeerConnection.prototype.createAnswer
                         dumpSDP(answer));
                 }
 
+                if (!this.session.room.options.disableRtx && !RTCBrowserType.isFirefox()) {
+                    answer.sdp = this.rtxModifier.modifyRtxSsrcs(answer.sdp);
+                    this.trace(
+                        'createAnswerOnSuccess::postTransform (rtx modifier)',
+                        dumpSDP(answer));
+                }
+
                 // Fix the setup attribute (see _fixAnswerRFC4145Setup for
                 //  details)
                 let remoteDescription = new SDP(this.remoteDescription.sdp);
@@ -571,18 +622,39 @@ TraceablePeerConnection.prototype.getStats = function(callback, errback) {
  * - groups - Array of the groups associated with the stream.
  */
 TraceablePeerConnection.prototype.generateNewStreamSSRCInfo = function () {
+    let ssrcInfo = {ssrcs: [], groups: []};
     if (!this.session.room.options.disableSimulcast
         && this.simulcast.isSupported()) {
-        var ssrcInfo = {ssrcs: [], groups: []};
-        for(var i = 0; i < SIMULCAST_LAYERS; i++)
-            ssrcInfo.ssrcs.push(RandomUtil.randomInt(1, 0xffffffff));
+        for (let i = 0; i < SIMULCAST_LAYERS; i++) {
+            ssrcInfo.ssrcs.push(SDPUtil.generateSsrc());
+        }
         ssrcInfo.groups.push({
             primarySSRC: ssrcInfo.ssrcs[0],
             group: {ssrcs: ssrcInfo.ssrcs.join(" "), semantics: "SIM"}});
-        return ssrcInfo;
+        ssrcInfo;
     } else {
-        return {ssrcs: [RandomUtil.randomInt(1, 0xffffffff)], groups: []};
+        ssrcInfo = {ssrcs: [SDPUtil.generateSsrc()], groups: []};
     }
+    if (!this.session.room.options.disableRtx) {
+        // Specifically use a for loop here because we'll
+        //  be adding to the list we're iterating over, so we
+        //  only want to iterate through the items originally
+        //  on the list
+        const currNumSsrcs = ssrcInfo.ssrcs.length;
+        for (let i = 0; i < currNumSsrcs; ++i) {
+            const primarySsrc = ssrcInfo.ssrcs[i];
+            const rtxSsrc = SDPUtil.generateSsrc();
+            ssrcInfo.ssrcs.push(rtxSsrc);
+            ssrcInfo.groups.push({
+                primarySSRC: primarySsrc,
+                group: { 
+                    ssrcs: primarySsrc + " " + rtxSsrc,
+                    semantics: "FID"
+                }
+            });
+        }
+    }
+    return ssrcInfo;
 };
 
 module.exports = TraceablePeerConnection;

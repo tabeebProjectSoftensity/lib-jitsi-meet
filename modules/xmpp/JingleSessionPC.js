@@ -288,6 +288,19 @@ JingleSessionPC.prototype.readSsrcInfo = function (contents) {
 };
 
 /**
+ * Makes the underlying TraceablePeerConnection generate new SSRC for
+ * the recvonly video stream.
+ * @deprecated
+ */
+JingleSessionPC.prototype.generateRecvonlySsrc = function() {
+    if (this.peerconnection) {
+        this.peerconnection.generateRecvonlySsrc();
+    } else {
+        logger.error("Unable to generate recvonly SSRC - no peerconnection");
+    }
+};
+
+/**
  * Does accept incoming Jingle 'session-initiate' and should send
  * 'session-accept' in result.
  * @param jingleOffer jQuery selector pointing to the jingle element of
@@ -333,7 +346,7 @@ JingleSessionPC.prototype.setOfferCycle = function (jingleOfferIq,
             .then(() => {
                 finishedCallback();
             }, (error) => {
-                logger.info("Error renegotiating after setting new remote offer: " + error);
+                logger.error("Error renegotiating after setting new remote offer: " + error);
                 JingleSessionPC.onJingleFatalError(this, error);
                 finishedCallback(error);
             });
@@ -642,7 +655,7 @@ JingleSessionPC.prototype.addRemoteStream = function (elem) {
                 this.notifyMySSRCUpdate(mySdp, newSdp);
                 finishedCallback();
             }, (error) => {
-                logger.info("Error renegotiating after processing remote source-add: " + error);
+                logger.error("Error renegotiating after processing remote source-add: " + error);
                 finishedCallback(error);
             });
     };
@@ -794,12 +807,14 @@ JingleSessionPC.prototype._renegotiate = function(optionalRemoteSdp) {
                     XMPPEvents.REMOTE_UFRAG_CHANGED, remoteUfrag);
         }
 
+        logger.debug("Renegotiate: setting remote description");
         this.peerconnection.setRemoteDescription(
             remoteDescription,
             () => {
                 if (this.signalingState === 'closed') {
                     reject("Attemped to setRemoteDescription in state closed");
                 }
+                logger.debug("Renegotiate: creating answer");
                 this.peerconnection.createAnswer(
                     (answer) => {
                         let localUfrag = getUfrag(answer.sdp);
@@ -808,6 +823,7 @@ JingleSessionPC.prototype._renegotiate = function(optionalRemoteSdp) {
                             this.room.eventEmitter.emit(
                                     XMPPEvents.LOCAL_UFRAG_CHANGED, localUfrag);
                         }
+                        logger.debug("Renegotiate: setting local description");
                         this.peerconnection.setLocalDescription(
                             answer,
                             () => { resolve(); },
