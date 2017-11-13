@@ -1,8 +1,14 @@
+import RTCBrowserType from '../RTC/RTCBrowserType';
+import Settings from '../settings/Settings';
+
 /**
  * Interface for analytics handlers.
  */
 class AnalyticsAbstract {
-    sendEvent() {}
+    /**
+     *
+     */
+    sendEvent() {} // eslint-disable-line no-empty-function
 }
 
 /**
@@ -10,8 +16,12 @@ class AnalyticsAbstract {
  * @extends AnalyticsAbstract
  */
 class CacheAnalytics extends AnalyticsAbstract {
+    /**
+     *
+     */
     constructor() {
         super();
+
         // some events may happen before init or implementation script download
         // in this case we accumulate them in this array and send them on init
         this.eventCache = [];
@@ -24,8 +34,8 @@ class CacheAnalytics extends AnalyticsAbstract {
      */
     sendEvent(action, data = {}) {
         this.eventCache.push({
-            action: action,
-            data: data
+            action,
+            data
         });
     }
 
@@ -34,35 +44,36 @@ class CacheAnalytics extends AnalyticsAbstract {
      * @returns {Array} with the cached events.
      */
     drainCachedEvents() {
-        let eventCacheCopy = this.eventCache.slice();
+        const eventCacheCopy = this.eventCache.slice();
+
         this.eventCache = [];
+
         return eventCacheCopy;
     }
 
 }
 
-let cacheAnalytics = new CacheAnalytics();
+const cacheAnalytics = new CacheAnalytics();
 
 /**
  * This class will store and manage the handlers that are going to be used.
  */
 class AnalyticsAdapter {
+    /**
+     * Creates new AnalyticsAdapter instance.
+     */
     constructor() {
+        this.disposed = false;
+        this.browserName = RTCBrowserType.getBrowserName();
         this.analyticsHandlers = new Set();
 
         /**
          * Map of properties that will be added to every event
          */
-        this.permanentProperties = Object.create(null);
-    }
+        this.permanentProperties = {
+            callstatsname: Settings.callStatsUserName
+        };
 
-    /**
-     * Initializes the AnalyticsAdapter. Adds the cacheAnalytics handler to
-     * cache all the events until we have other handlers that are going to send
-     * them.
-     */
-    init(browserName) {
-        this.browserName = browserName;
         this.analyticsHandlers.add(cacheAnalytics);
     }
 
@@ -72,10 +83,16 @@ class AnalyticsAdapter {
      * @param {Object} data can be any JSON object
      */
     sendEvent(action, data = {}) {
-        let modifiedData = Object.assign(
-            {browserName: this.browserName}, this.permanentProperties, data);
+        const modifiedData = Object.assign(
+            { browserName: this.browserName }, this.permanentProperties, data);
+
         this.analyticsHandlers.forEach(
-            analytics => analytics.sendEvent(action, modifiedData));
+            analytics =>
+                analytics.sendEvent(
+                    action,
+                    analytics === cacheAnalytics ? data : modifiedData
+                )
+        );
     }
 
     /**
@@ -84,6 +101,7 @@ class AnalyticsAdapter {
     dispose() {
         cacheAnalytics.drainCachedEvents();
         this.analyticsHandlers.clear();
+        this.disposed = true;
     }
 
     /**
@@ -91,7 +109,10 @@ class AnalyticsAdapter {
      * the cached events.
      * @param {Array} handlers the handlers
      */
-    setAnalyticsHandlers (handlers) {
+    setAnalyticsHandlers(handlers) {
+        if (this.disposed) {
+            return;
+        }
         this.analyticsHandlers = new Set(handlers);
         cacheAnalytics.drainCachedEvents().forEach(
             ev => this.sendEvent(ev.action, ev.data));
@@ -101,9 +122,8 @@ class AnalyticsAdapter {
      * Adds map of properties that will be added to every event.
      * @param {Object} properties the map of properties
      */
-    addPermanentProperties (properties) {
-        this.permanentProperties
-            = Object.assign(this.permanentProperties, properties);
+    addPermanentProperties(properties) {
+        Object.assign(this.permanentProperties, properties);
     }
 }
 

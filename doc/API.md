@@ -38,24 +38,26 @@ You can access the following methods and objects trough ```JitsiMeetJS``` object
 
 *  ```JitsiMeetJS.init(options)``` - this method initialized Jitsi Meet API.
 The ```options``` parameter is JS object with the following properties:
-    1. useIPv6 - boolean property
-    2. desktopSharingChromeExtId - The ID of the jidesha extension for Chrome. Example: 'mbocklcggfhnbahlnepmldehdhpjfcjp'
-    3. desktopSharingChromeDisabled - Boolean. Whether desktop sharing should be disabled on Chrome. Example: false.
-    4. desktopSharingChromeSources - Array of strings with the media sources to use when using screen sharing with the Chrome extension. Example: ['screen', 'window']
-    5. desktopSharingChromeMinExtVersion - Required version of Chrome extension. Example: '0.1'
-    6. desktopSharingFirefoxExtId - The ID of the jidesha extension for Firefox. If null, we assume that no extension is required.
-    7. desktopSharingFirefoxDisabled - Boolean. Whether desktop sharing should be disabled on Firefox. Example: false.
-    8. desktopSharingFirefoxMaxVersionExtRequired - The maximum version of Firefox which requires a jidesha extension. Example: if set to 41, we will require the extension for Firefox versions up to and including 41. On Firefox 42 and higher, we will run without the extension. If set to -1, an extension will be required for all versions of Firefox.
-    9. desktopSharingFirefoxExtensionURL - The URL to the Firefox extension for desktop sharing. "null" if no extension is required.
-    10. disableAudioLevels - boolean property. Enables/disables audio levels.
-    11. disableSimulcast - boolean property. Enables/disables simulcast.
-    12. enableWindowOnErrorHandler - boolean property (default false). Enables/disables attaching global onerror handler (window.onerror).
-    13. disableThirdPartyRequests - if true - callstats will be disabled and the callstats API won't be included.
-    14. enableAnalyticsLogging - boolean property (default false). Enables/disables analytics logging.
-    15. callStatsCustomScriptUrl - (optional) custom url to access callstats client script
-    16. callStatsConfIDNamespace - (optional) a namespace to prepend the callstats conference ID with. Defaults to the window.location.hostname
-    17. disableRtx - (optional) boolean property (default to false).  Enables/disable the use of RTX.
-    18. preferH264 - (optional) boolean property (default to false).  Enables/disable preferring the first instance of an h264 codec in an offer by moving it to the front of the codec list.
+    - `useIPv6` - boolean property
+    - `disableDesktopSharing` - Boolean. When set to true disables desktop sharing on all browsers. 
+    - `desktopSharingChromeExtId` - The ID of the jidesha extension for Chrome. Example: 'mbocklcggfhnbahlnepmldehdhpjfcjp'
+    - `desktopSharingChromeDisabled` - Boolean. Whether desktop sharing should be disabled on Chrome. Example: false.
+    - `desktopSharingChromeSources` - Array of strings with the media sources to use when using screen sharing with the Chrome extension. Example: ['screen', 'window']
+    - `desktopSharingChromeMinExtVersion` - Required version of Chrome extension. Example: '0.1'
+    - `desktopSharingFirefoxExtId` - The ID of the jidesha extension for Firefox. If null, we assume that no extension is required.
+    - `desktopSharingFirefoxDisabled` - Boolean. Whether desktop sharing should be disabled on Firefox. Example: false.
+    - `desktopSharingFirefoxMaxVersionExtRequired` - The maximum version of Firefox which requires a jidesha extension. Example: if set to 41, we will require the extension for Firefox versions up to and including 41. On Firefox 42 and higher, we will run without the extension. If set to -1, an extension will be required for all versions of Firefox.
+    - `desktopSharingFirefoxExtensionURL` - The URL to the Firefox extension for desktop sharing. "null" if no extension is required.
+    - `disableAudioLevels` - boolean property. Enables/disables audio levels.
+    - `disableSimulcast` - boolean property. Enables/disables simulcast.
+    - `enableWindowOnErrorHandler` - boolean property (default false). Enables/disables attaching global onerror handler (window.onerror).
+    - `disableThirdPartyRequests` - if true - callstats will be disabled and the callstats API won't be included.
+    - `enableAnalyticsLogging` - boolean property (default false). Enables/disables analytics logging.
+    - `callStatsCustomScriptUrl` - (optional) custom url to access callstats client script
+    - `callStatsConfIDNamespace` - (optional) a namespace to prepend the callstats conference ID with. Defaults to the window.location.hostname
+    - `disableRtx` - (optional) boolean property (default to false).  Enables/disable the use of RTX.
+    - `disableH264` - (optional) boolean property (default to false).  If enabled, strips the H.264 codec from the local SDP.
+    - `preferH264` - (optional) boolean property (default to false).  Enables/disable preferring the first instance of an h264 codec in an offer by moving it to the front of the codec list.
 
 * ```JitsiMeetJS.JitsiConnection``` - the ```JitsiConnection``` constructor. You can use that to create new server connection.
 
@@ -109,8 +111,7 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
         - MESSAGE_RECEIVED - new text message received. (parameters - id(string), text(string), ts(number))
         - DISPLAY_NAME_CHANGED - user has changed his display name. (parameters - id(string), displayName(string))
         - SUBJECT_CHANGED - notifies that subject of the conference has changed (parameters - subject(string))
-        - LAST_N_ENDPOINTS_CHANGED - last n set was changed (parameters - array of ids of users)
-        - IN_LAST_N_CHANGED - passes boolean property that shows whether the local user is included in last n set of any other user or not. (parameters - boolean)
+        - LAST_N_ENDPOINTS_CHANGED - last n set was changed (parameters - leavingEndpointIds(array) ids of users leaving lastN, enteringEndpointIds(array) ids of users entering lastN)
         - CONFERENCE_JOINED - notifies the local user that he joined the conference successfully. (no parameters)
         - CONFERENCE_LEFT - notifies the local user that he left the conference successfully. (no parameters)
         - DTMF_SUPPORT_CHANGED - notifies if at least one user supports DTMF. (parameters - supports(boolean))
@@ -175,7 +176,6 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
         - CONSTRAINT_FAILED - getUserMedia-related error, indicates that some of requested constraints in getUserMedia call were not satisfied.
         - TRACK_IS_DISPOSED - an error which indicates that track has been already disposed and cannot be longer used.
         - TRACK_NO_STREAM_FOUND - an error which indicates that track has no MediaStream associated.
-        - TRACK_MUTE_UNMUTE_IN_PROGRESS - an error which indicates that track is currently in progress of muting or unmuting itself.
         - CHROME_EXTENSION_GENERIC_ERROR - generic error for jidesha extension for Chrome.
         - CHROME_EXTENSION_USER_CANCELED - an error which indicates that user canceled screen sharing window selection dialog in jidesha extension for Chrome.
         - CHROME_EXTENSION_INSTALLATION_ERROR - an error which indicates that the jidesha extension for Chrome is failed to install.
@@ -218,12 +218,16 @@ This objects represents the server connection. You can create new ```JitsiConnec
 4. initJitsiConference(name, options) - creates new ```JitsiConference``` object.
     - name - the name of the conference
     - options - JS object with configuration options for the conference. You can change the following properties there:
-        1. openSctp - boolean property. Enables/disables datachannel support. **NOTE: we recommend to set that option to true**
+        1. openBridgeChannel - Enables/disables bridge channel. Values can be "datachannel", "websocket", true (treat it as "datachannel"), undefined (treat it as "datachannel") and false (don't open any channel). **NOTE: we recommend to set that option to true**
         2. recordingType - the type of recording to be used
         3. jirecon
         4. callStatsID - callstats credentials
         5. callStatsSecret - callstats credentials
         6. enableTalkWhileMuted - boolean property. Enables/disables talk while muted detection, by default the value is false/disabled.
+        7. ignoreStartMuted - ignores start muted events coming from jicofo.
+        8. enableStatsID - enables sending callStatsUsername as stats-id in presence, jicofo and videobridge will use it as endpointID to report stats
+        9. enableDisplayNameInStats - enables sending the users display name, if set, to callstats as alias of the endpointID stats 
+
         **NOTE: if 4 and 5 are set the library is going to send events to callstats. Otherwise the callstats integration will be disabled.**
 
 5. addEventListener(event, listener) - Subscribes the passed listener to the event.
@@ -251,6 +255,8 @@ The object represents a conference. We have the following methods to control the
     - password - string of the password. This parameter is not mandatory.
 
 2. leave() - leaves the conference. Returns Promise.
+
+3. myUserId() - get local user ID.
 
 4. getLocalTracks() - Returns array with JitsiTrack objects for the local streams.
 

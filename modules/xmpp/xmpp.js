@@ -1,29 +1,50 @@
-/* global $, Strophe */
+/* global $ */
 
-import { getLogger } from "jitsi-meet-logger";
+import { getLogger } from 'jitsi-meet-logger';
+import { Strophe } from 'strophe.js';
+import 'strophejs-plugin-disco';
+
+import RandomUtil from '../util/RandomUtil';
+import * as JitsiConnectionErrors from '../../JitsiConnectionErrors';
+import * as JitsiConnectionEvents from '../../JitsiConnectionEvents';
+import RTCBrowserType from '../RTC/RTCBrowserType';
+import initEmuc from './strophe.emuc';
+import initJingle from './strophe.jingle';
+import initStropheUtil from './strophe.util';
+import initPing from './strophe.ping';
+import initRayo from './strophe.rayo';
+import initStropheLogger from './strophe.logger';
+import Listenable from '../util/Listenable';
+import Caps from './Caps';
+
 const logger = getLogger(__filename);
-import * as JitsiConnectionErrors from "../../JitsiConnectionErrors";
-import * as JitsiConnectionEvents from "../../JitsiConnectionEvents";
-import RTCBrowserType from "../RTC/RTCBrowserType";
-import initEmuc from "./strophe.emuc";
-import initJingle from "./strophe.jingle";
-import initStropheUtil from "./strophe.util";
-import initPing from "./strophe.ping";
-import initRayo from "./strophe.rayo";
-import initStropheLogger from "./strophe.logger";
-import Listenable from "../util/Listenable";
-import Caps from "./Caps";
 
+/**
+ *
+ * @param token
+ * @param bosh
+ */
 function createConnection(token, bosh = '/http-bind') {
     // Append token as URL param
     if (token) {
-        bosh += (bosh.indexOf('?') == -1 ? '?' : '&') + 'token=' + token;
+        // eslint-disable-next-line no-param-reassign
+        bosh += `${bosh.indexOf('?') === -1 ? '?' : '&'}token=${token}`;
     }
 
     return new Strophe.Connection(bosh);
 }
 
+/**
+ *
+ */
 export default class XMPP extends Listenable {
+    /**
+     * FIXME describe all options
+     * @param {Object} options
+     * @param {Array<Object>} options.p2pStunServers see
+     * {@link JingleConnectionPlugin} for more details.
+     * @param token
+     */
     constructor(options, token) {
         super();
         this.connection = null;
@@ -45,16 +66,17 @@ export default class XMPP extends Listenable {
 
         // Setup a disconnect on unload as a way to facilitate API consumers. It
         // sounds like they would want that. A problem for them though may be if
-        // they wanted to utilize the connected connection in an unload handler of
-        // their own. However, it should be fairly easy for them to do that by
-        // registering their unload handler before us.
+        // they wanted to utilize the connected connection in an unload handler
+        // of their own. However, it should be fairly easy for them to do that
+        // by registering their unload handler before us.
         $(window).on('beforeunload unload', this.disconnect.bind(this));
     }
 
     /**
-     * Initializes the list of feature advertised through the disco-info mechanism
+     * Initializes the list of feature advertised through the disco-info
+     * mechanism.
      */
-    initFeaturesList () {
+    initFeaturesList() {
         // http://xmpp.org/extensions/xep-0167.html#support
         // http://xmpp.org/extensions/xep-0176.html#support
         this.caps.addFeature('urn:xmpp:jingle:1');
@@ -65,75 +87,90 @@ export default class XMPP extends Listenable {
         this.caps.addFeature('urn:xmpp:jingle:apps:rtp:audio');
         this.caps.addFeature('urn:xmpp:jingle:apps:rtp:video');
 
-        if (RTCBrowserType.isChrome() || RTCBrowserType.isOpera()
-            || RTCBrowserType.isTemasysPluginUsed()) {
+        if (!this.options.disableRtx && RTCBrowserType.supportsRtx()) {
             this.caps.addFeature('urn:ietf:rfc:4588');
         }
 
         // this is dealt with by SDP O/A so we don't need to announce this
         // XEP-0293
-        //this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtcp-fb:0');
+        // this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtcp-fb:0');
         // XEP-0294
-        //this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0');
+        // this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0');
 
         this.caps.addFeature('urn:ietf:rfc:5761'); // rtcp-mux
         this.caps.addFeature('urn:ietf:rfc:5888'); // a=group, e.g. bundle
 
-        //this.caps.addFeature('urn:ietf:rfc:5576'); // a=ssrc
+        // this.caps.addFeature('urn:ietf:rfc:5576'); // a=ssrc
 
         // Enable Lipsync ?
-        if (RTCBrowserType.isChrome() && false !== this.options.enableLipSync) {
-            logger.info("Lip-sync enabled !");
+        if (RTCBrowserType.isChrome() && this.options.enableLipSync !== false) {
+            logger.info('Lip-sync enabled !');
             this.caps.addFeature('http://jitsi.org/meet/lipsync');
         }
 
-        if(this.connection.rayo) {
+        if (this.connection.rayo) {
             this.caps.addFeature('urn:xmpp:rayo:client:1');
         }
     }
 
-    getConnection () { return this.connection; }
+    /**
+     *
+     */
+    getConnection() {
+        return this.connection;
+    }
 
     /**
      * Receive connection status changes and handles them.
-     * @password {string} the password passed in connect method
-     * @status the connection status
-     * @msg message
+     *
+     * @param {Object} credentials
+     * @param {string} credentials.jid - The user's XMPP ID passed to the
+     * connect method. For example, 'user@xmpp.com'.
+     * @param {string} credentials.password - The password passed to the connect
+     * method.
+     * @param {string} status - One of Strophe's connection status strings.
+     * @param {string} [msg] - The connection error message provided by Strophe.
      */
-    connectionHandler (password, status, msg) {
+    connectionHandler(credentials = {}, status, msg) {
         const now = window.performance.now();
         const statusStr = Strophe.getStatusString(status).toLowerCase();
+
         this.connectionTimes[statusStr] = now;
-        logger.log("(TIME) Strophe " + statusStr +
-            (msg ? "[" + msg + "]" : "") + ":\t", now);
-        if (status === Strophe.Status.CONNECTED ||
-            status === Strophe.Status.ATTACHED) {
-            if (this.options.useStunTurn) {
+        logger.log(
+            `(TIME) Strophe ${statusStr}${msg ? `[${msg}]` : ''}:\t`,
+            now);
+        if (status === Strophe.Status.CONNECTED
+            || status === Strophe.Status.ATTACHED) {
+            if (this.options.useStunTurn
+                || (this.options.p2p && this.options.p2p.useStunTurn)) {
                 this.connection.jingle.getStunAndTurnCredentials();
             }
 
-            logger.info("My Jabber ID: " + this.connection.jid);
+            logger.info(`My Jabber ID: ${this.connection.jid}`);
 
             // Schedule ping ?
-            var pingJid = this.connection.domain;
+            const pingJid = this.connection.domain;
+
             this.connection.ping.hasPingSupport(
                 pingJid,
-                function (hasPing) {
-                    if (hasPing)
+                hasPing => {
+                    if (hasPing) {
                         this.connection.ping.startInterval(pingJid);
-                    else
-                        logger.warn("Ping NOT supported by " + pingJid);
-                }.bind(this));
+                    } else {
+                        logger.warn(`Ping NOT supported by ${pingJid}`);
+                    }
+                });
 
-            if (password)
+            if (credentials.password) {
                 this.authenticatedUser = true;
-            if (this.connection && this.connection.connected &&
-                Strophe.getResourceFromJid(this.connection.jid)) {
+            }
+            if (this.connection && this.connection.connected
+                    && Strophe.getResourceFromJid(this.connection.jid)) {
                 // .connected is true while connecting?
-    //                this.connection.send($pres());
+                // this.connection.send($pres());
                 this.eventEmitter.emit(
-                        JitsiConnectionEvents.CONNECTION_ESTABLISHED,
-                        Strophe.getResourceFromJid(this.connection.jid));
+                    JitsiConnectionEvents.CONNECTION_ESTABLISHED,
+                    Strophe.getResourceFromJid(this.connection.jid));
             }
         } else if (status === Strophe.Status.CONNFAIL) {
             if (msg === 'x-strophe-bad-non-anon-jid') {
@@ -146,51 +183,61 @@ export default class XMPP extends Listenable {
             // Stop ping interval
             this.connection.ping.stopInterval();
             const wasIntentionalDisconnect = this.disconnectInProgress;
-            const errMsg = msg ? msg : this.lastErrorMsg;
+            const errMsg = msg || this.lastErrorMsg;
+
             this.disconnectInProgress = false;
             if (this.anonymousConnectionFailed) {
                 // prompt user for username and password
                 this.eventEmitter.emit(
                     JitsiConnectionEvents.CONNECTION_FAILED,
                     JitsiConnectionErrors.PASSWORD_REQUIRED);
-            } else if(this.connectionFailed) {
+            } else if (this.connectionFailed) {
                 this.eventEmitter.emit(
                     JitsiConnectionEvents.CONNECTION_FAILED,
                     JitsiConnectionErrors.OTHER_ERROR, errMsg);
-            } else if (!wasIntentionalDisconnect) {
+            } else if (wasIntentionalDisconnect) {
+                this.eventEmitter.emit(
+                    JitsiConnectionEvents.CONNECTION_DISCONNECTED, errMsg);
+            } else {
                 // XXX if Strophe drops the connection while not being asked to,
                 // it means that most likely some serious error has occurred.
                 // One currently known case is when a BOSH request fails for
                 // more than 4 times. The connection is dropped without
                 // supplying a reason(error message/event) through the API.
-                logger.error("XMPP connection dropped!");
+                logger.error('XMPP connection dropped!');
+
                 // XXX if the last request error is within 5xx range it means it
                 // was a server failure
                 const lastErrorStatus = Strophe.getLastErrorStatus();
+
                 if (lastErrorStatus >= 500 && lastErrorStatus < 600) {
                     this.eventEmitter.emit(
                         JitsiConnectionEvents.CONNECTION_FAILED,
                         JitsiConnectionErrors.SERVER_ERROR,
-                        errMsg ? errMsg : 'server-error');
+                        errMsg || 'server-error');
                 } else {
                     this.eventEmitter.emit(
                         JitsiConnectionEvents.CONNECTION_FAILED,
                         JitsiConnectionErrors.CONNECTION_DROPPED_ERROR,
-                        errMsg ? errMsg : 'connection-dropped-error');
+                        errMsg || 'connection-dropped-error');
                 }
-            } else {
-                this.eventEmitter.emit(
-                    JitsiConnectionEvents.CONNECTION_DISCONNECTED, errMsg);
             }
         } else if (status === Strophe.Status.AUTHFAIL) {
             // wrong password or username, prompt user
-            this.eventEmitter.emit(JitsiConnectionEvents.CONNECTION_FAILED,
-                JitsiConnectionErrors.PASSWORD_REQUIRED);
-
+            this.eventEmitter.emit(
+                JitsiConnectionEvents.CONNECTION_FAILED,
+                JitsiConnectionErrors.PASSWORD_REQUIRED,
+                msg,
+                credentials);
         }
     }
 
-    _connect (jid, password) {
+    /**
+     *
+     * @param jid
+     * @param password
+     */
+    _connect(jid, password) {
         // connection.connect() starts the connection process.
         //
         // As the connection process proceeds, the user supplied callback will
@@ -221,52 +268,84 @@ export default class XMPP extends Listenable {
         this.anonymousConnectionFailed = false;
         this.connectionFailed = false;
         this.lastErrorMsg = undefined;
-        this.connection.connect(jid, password,
-            this.connectionHandler.bind(this, password));
+        this.connection.connect(
+            jid,
+            password,
+            this.connectionHandler.bind(this, {
+                jid,
+                password
+            }));
     }
 
     /**
-     * Attach to existing connection. Can be used for optimizations. For example:
-     * if the connection is created on the server we can attach to it and start
-     * using it.
+     * Attach to existing connection. Can be used for optimizations. For
+     * example: if the connection is created on the server we can attach to it
+     * and start using it.
      *
      * @param options {object} connecting options - rid, sid, jid and password.
      */
-    attach (options) {
-        const now = this.connectionTimes["attaching"] = window.performance.now();
-        logger.log("(TIME) Strophe Attaching\t:" + now);
+    attach(options) {
+        const now = this.connectionTimes.attaching = window.performance.now();
+
+        logger.log(`(TIME) Strophe Attaching\t:${now}`);
         this.connection.attach(options.jid, options.sid,
-            parseInt(options.rid,10)+1,
-            this.connectionHandler.bind(this, options.password));
+            parseInt(options.rid, 10) + 1,
+            this.connectionHandler.bind(this, {
+                jid: options.jid,
+                password: options.password
+            }));
     }
 
-    connect (jid, password) {
+    /**
+     *
+     * @param jid
+     * @param password
+     */
+    connect(jid, password) {
         this.connectParams = {
-            jid: jid,
-            password: password
+            jid,
+            password
         };
         if (!jid) {
-            let configDomain
-                = this.options.hosts.anonymousdomain ||
-                    this.options.hosts.domain;
+            const { anonymousdomain, domain } = this.options.hosts;
+            let configDomain = anonymousdomain || domain;
+
             // Force authenticated domain if room is appended with '?login=true'
             // or if we're joining with the token
-            if (this.options.hosts.anonymousdomain
-                    && (window.location.search.indexOf("login=true") !== -1
-                        || this.options.token)) {
-                configDomain = this.options.hosts.domain;
+
+            // FIXME Do not rely on window.location because (1) React Native
+            // does not have a window.location by default and (2) here we cannot
+            // know for sure that query/search has not be stripped from
+            // window.location by the time the following executes.
+            const { location } = window;
+
+            if (anonymousdomain) {
+                const search = location && location.search;
+
+                if ((search && search.indexOf('login=true') !== -1)
+                        || this.token) {
+                    configDomain = domain;
+                }
             }
-            jid = configDomain || window.location.hostname;
+
+            // eslint-disable-next-line no-param-reassign
+            jid = configDomain || (location && location.hostname);
         }
+
         return this._connect(jid, password);
     }
 
-    createRoom (roomName, options) {
+    /**
+     *
+     * @param roomName
+     * @param options
+     */
+    createRoom(roomName, options) {
         // By default MUC nickname is the resource part of the JID
         let mucNickname = Strophe.getNodeFromJid(this.connection.jid);
-        let roomjid = roomName  + "@" + this.options.hosts.muc + "/";
-        let cfgNickname
-            = (options.useNicks && options.nick) ? options.nick : null;
+        let roomjid = `${roomName}@${this.options.hosts.muc}/`;
+        const cfgNickname
+            = options.useNicks && options.nick ? options.nick : null;
 
         if (cfgNickname) {
             // Use nick if it's defined
@@ -285,72 +364,91 @@ export default class XMPP extends Listenable {
      * Returns the logs from strophe.jingle.
      * @returns {Object}
      */
-    getJingleLog () {
+    getJingleLog() {
         const jingle = this.connection.jingle;
-        return jingle? jingle.getLog() : {};
+
+
+        return jingle ? jingle.getLog() : {};
     }
 
     /**
      * Returns the logs from strophe.
      */
-    getXmppLog () {
+    getXmppLog() {
         return (this.connection.logger || {}).log || null;
     }
 
-    dial (to, from, roomName,roomPass) {
-        this.connection.rayo.dial(to, from, roomName,roomPass);
+    /**
+     *
+     */
+    dial(...args) {
+        this.connection.rayo.dial(...args);
     }
 
-    setMute (jid, mute) {
+    /**
+     *
+     * @param jid
+     * @param mute
+     */
+    setMute(jid, mute) {
         this.connection.moderate.setMute(jid, mute);
     }
 
-    eject (jid) {
+    /**
+     *
+     * @param jid
+     */
+    eject(jid) {
         this.connection.moderate.eject(jid);
     }
 
-    getSessions () {
+    /**
+     *
+     */
+    getSessions() {
         return this.connection.jingle.sessions;
     }
 
     /**
      * Disconnects this from the XMPP server (if this is connected).
      *
-     * @param ev optionally, the event which triggered the necessity to disconnect
-     * from the XMPP server (e.g. beforeunload, unload)
+     * @param ev optionally, the event which triggered the necessity to
+     * disconnect from the XMPP server (e.g. beforeunload, unload).
      */
-    disconnect (ev) {
+    disconnect(ev) {
         if (this.disconnectInProgress
                 || !this.connection
                 || !this.connection.connected) {
             this.eventEmitter.emit(JitsiConnectionEvents.WRONG_STATE);
+
             return;
         }
 
         this.disconnectInProgress = true;
 
         // XXX Strophe is asynchronously sending by default. Unfortunately, that
-        // means that there may not be enough time to send an unavailable presence
-        // or disconnect at all. Switching Strophe to synchronous sending is not
-        // much of an option because it may lead to a noticeable delay in navigating
-        // away from the current location. As a compromise, we will try to increase
-        // the chances of sending an unavailable presence and/or disconecting within
-        // the short time span that we have upon unloading by invoking flush() on
-        // the connection. We flush() once before disconnect() in order to attemtp
-        // to have its unavailable presence at the top of the send queue. We flush()
-        // once more after disconnect() in order to attempt to have its unavailable
-        // presence sent as soon as possible.
+        // means that there may not be enough time to send an unavailable
+        // presence or disconnect at all. Switching Strophe to synchronous
+        // sending is not much of an option because it may lead to a noticeable
+        // delay in navigating away from the current location. As a compromise,
+        // we will try to increase the chances of sending an unavailable
+        // presence and/or disconecting within the short time span that we have
+        // upon unloading by invoking flush() on the connection. We flush() once
+        // before disconnect() in order to attemtp to have its unavailable
+        // presence at the top of the send queue. We flush() once more after
+        // disconnect() in order to attempt to have its unavailable presence
+        // sent as soon as possible.
         this.connection.flush();
 
         if (ev !== null && typeof ev !== 'undefined') {
             const evType = ev.type;
 
-            if (evType == 'beforeunload' || evType == 'unload') {
+            if (evType === 'beforeunload' || evType === 'unload') {
                 // XXX Whatever we said above, synchronous sending is the best
                 // (known) way to properly disconnect from the XMPP server.
-                // Consequently, it may be fine to have the source code and comment
-                // it in or out depending on whether we want to run with it for some
-                // time.
+                // Consequently, it may be fine to have the source code and
+                // comment it in or out depending on whether we want to run with
+                // it for some time.
                 this.connection.options.sync = true;
             }
         }
@@ -362,9 +460,21 @@ export default class XMPP extends Listenable {
         }
     }
 
+    /**
+     *
+     */
     _initStrophePlugins() {
+        // FIXME: remove once we have a default config template. -saghul
+        const defaultStunServers = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ];
+        const p2pStunServers = (this.options.p2p
+            && this.options.p2p.stunServers) || defaultStunServers;
+
         initEmuc(this);
-        initJingle(this, this.eventEmitter);
+        initJingle(this, this.eventEmitter, p2pStunServers);
         initStropheUtil();
         initPing(this);
         initRayo();
