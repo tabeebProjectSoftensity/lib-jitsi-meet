@@ -1,4 +1,3 @@
-/* global $ */
 import { getLogger } from 'jitsi-meet-logger';
 import { $iq } from 'strophe.js';
 
@@ -82,8 +81,11 @@ export default class JitsiVideoSIPGWSession extends Listenable {
      * Changes the state of this session.
      *
      * @param {string} newState - The new {VideoSIPGWConstants} state to set.
+     * @param {string} [optional] failureReason - The reason why a failure state
+     * was entered.
+     * @returns {void}
      */
-    setState(newState) {
+    setState(newState, failureReason) {
         if (newState === this.state) {
             return;
         }
@@ -91,11 +93,13 @@ export default class JitsiVideoSIPGWSession extends Listenable {
         const oldState = this.state;
 
         this.state = newState;
-        this.eventEmitter.emit(this.sipAddress,
+        this.eventEmitter.emit(STATE_CHANGED,
             {
-                name: STATE_CHANGED,
+                address: this.sipAddress,
+                failureReason,
                 oldState,
-                newState: this.state
+                newState: this.state,
+                displayName: this.displayName
             }
         );
     }
@@ -140,20 +144,13 @@ export default class JitsiVideoSIPGWSession extends Listenable {
             .c('jibri', attributes)
             .up();
 
-        logger.log('Stop video SIP GW session', iq.nodeTree);
+        logger.debug(`${action} video SIP GW session`, iq.nodeTree);
         this.chatRoom.connection.sendIQ(
             iq,
-            result => {
-                logger.log('Result', result);
-                const initialState
-                    = $(result).find('jibri')
-                        .attr('state');
-
-                this.setState(initialState);
-            },
+            () => {}, // eslint-disable-line no-empty-function
             error => {
-                logger.log('Failed to start video SIP GW session, error: ',
-                    error);
+                logger.error(
+                    `Failed to ${action} video SIP GW session, error: `, error);
                 this.setState(VideoSIPGWConstants.STATE_FAILED);
             });
     }

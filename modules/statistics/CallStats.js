@@ -1,6 +1,6 @@
 /* global callstats */
 
-import RTCBrowserType from '../RTC/RTCBrowserType';
+import browser from '../browser';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 
 const logger = require('jitsi-meet-logger').getLogger(__filename);
@@ -106,6 +106,8 @@ export default class CallStats {
             return;
         }
 
+        CallStats.backendInitialized = true;
+
         // I hate that
         let atLeastOneFabric = false;
         let defaultInstance = null;
@@ -126,13 +128,21 @@ export default class CallStats {
             return;
         }
 
-        CallStats.initialized = true;
+        CallStats._emptyReportQueue(defaultInstance);
+    }
 
+    /**
+     * Empties report queue.
+     *
+     * @param {CallStats} csInstance - The callstats instance.
+     * @private
+     */
+    static _emptyReportQueue(csInstance) {
         // There is no conference ID nor a PeerConnection available when some of
         // the events are scheduled on the reportsQueue, so those will be
         // reported on the first initialized fabric.
-        const defaultConfID = defaultInstance.confID;
-        const defaultPC = defaultInstance.peerconnection;
+        const defaultConfID = csInstance.confID;
+        const defaultPC = csInstance.peerconnection;
 
         // notify callstats about failures if there were any
         for (const report of CallStats.reportsQueue) {
@@ -140,7 +150,7 @@ export default class CallStats {
                 const errorData = report.data;
 
                 CallStats._reportError(
-                    defaultInstance,
+                    csInstance,
                     errorData.type,
                     errorData.error,
                     errorData.pc || defaultPC);
@@ -188,7 +198,7 @@ export default class CallStats {
             logger.warn('No error is passed!');
             _error = new Error('Unknown error');
         }
-        if (CallStats.initialized && cs) {
+        if (CallStats.backendInitialized && cs) {
             CallStats.backend.reportError(pc, cs.confID, type, _error);
         } else {
             CallStats.reportsQueue.push({
@@ -218,7 +228,7 @@ export default class CallStats {
         const pc = cs && cs.peerconnection;
         const confID = cs && cs.confID;
 
-        if (CallStats.initialized && cs) {
+        if (CallStats.backendInitialized && cs) {
             CallStats.backend.sendFabricEvent(pc, event, confID, eventData);
         } else {
             CallStats.reportsQueue.push({
@@ -290,7 +300,7 @@ export default class CallStats {
                 // NOTE it is not safe to log whole objects on react-native as
                 // those contain too many circular references and may crash
                 // the app.
-                if (!RTCBrowserType.isReactNative()) {
+                if (!browser.isReactNative()) {
                     console && console.debug('reportError', pc, cs, type);
                 }
             } else {
@@ -344,7 +354,7 @@ export default class CallStats {
             // imports are only allowed at top-level, so we must use require
             // here. Sigh.
             const CallStatsBackend
-                = RTCBrowserType.isReactNative()
+                = browser.isReactNative()
                     ? require('react-native-callstats/callstats')
                     : callstats;
 
@@ -365,7 +375,7 @@ export default class CallStats {
                 configParams = {
                     applicationVersion:
                         `${options.applicationName} (${
-                            RTCBrowserType.getBrowserName()})`
+                            browser.getName()})`
                 };
             }
 
@@ -377,6 +387,20 @@ export default class CallStats {
                 CallStats._initCallback,
                 undefined,
                 configParams);
+
+            const getWiFiStatsMethod = options.getWiFiStatsMethod;
+
+            if (getWiFiStatsMethod) {
+                CallStats.backend.attachWifiStatsHandler(getWiFiStatsMethod);
+
+                getWiFiStatsMethod().then(result => {
+                    if (result) {
+                        logger.info('Reported wifi addresses:'
+                            , JSON.parse(result).addresses);
+                    }
+                })
+                .catch(() => {});// eslint-disable-line no-empty-function
+            }
 
             return true;
         } catch (e) {
@@ -441,17 +465,17 @@ export default class CallStats {
      *
      * @param {string} conferenceID the conference ID for which the feedback
      * will be reported.
-     * @param overallFeedback an integer between 1 and 5 indicating the
+     * @param overall an integer between 1 and 5 indicating the
      * user feedback
-     * @param detailedFeedback detailed feedback from the user. Not yet used
+     * @param comment detailed feedback from the user.
      */
-    static sendFeedback(conferenceID, overallFeedback, detailedFeedback) {
+    static sendFeedback(conferenceID, overall, comment) {
         if (CallStats.backend) {
             CallStats.backend.sendUserFeedback(
                 conferenceID, {
                     userID: CallStats.userID,
-                    overall: overallFeedback,
-                    comment: detailedFeedback
+                    overall,
+                    comment
                 });
         } else {
             logger.error('Failed to submit feedback to CallStats - no backend');
@@ -507,8 +531,15 @@ export default class CallStats {
 
         CallStats.fabrics.add(this);
 
-        if (CallStats.initialized) {
+        if (CallStats.backendInitialized) {
             this._addNewFabric();
+
+            // if this is the first fabric let's try to empty the
+            // report queue. Reports all events that we recorded between
+            // backend initialization and receiving the first fabric
+            if (CallStats.fabrics.size === 1) {
+                CallStats._emptyReportQueue(this);
+            }
         }
     }
 
@@ -580,7 +611,7 @@ export default class CallStats {
 
         const callStatsId = isLocal ? CallStats.userID : streamEndpointId;
 
-        if (CallStats.initialized) {
+        if (CallStats.backendInitialized) {
             CallStats.backend.associateMstWithUserID(
                 this.peerconnection,
                 callStatsId,
@@ -617,7 +648,7 @@ export default class CallStats {
      * closed and no evens should be reported, after this call.
      */
     sendTerminateEvent() {
-        if (CallStats.initialized) {
+        if (CallStats.backendInitialized) {
             CallStats.backend.sendFabricEvent(
                 this.peerconnection,
                 CallStats.backend.fabricEvent.fabricTerminated,
@@ -672,11 +703,20 @@ export default class CallStats {
      * Notifies CallStats for screen sharing events
      * @param {boolean} start true for starting screen sharing and
      * false for not stopping
+     * @param {string|null} ssrc - optional ssrc value, used only when
+     * starting screen sharing.
      */
-    sendScreenSharingEvent(start) {
+    sendScreenSharingEvent(start, ssrc) {
+        let eventData;
+
+        if (ssrc) {
+            eventData = { ssrc };
+        }
+
         CallStats._reportEvent(
             this,
-            start ? fabricEvent.screenShareStart : fabricEvent.screenShareStop);
+            start ? fabricEvent.screenShareStart : fabricEvent.screenShareStop,
+            eventData);
     }
 
     /**
@@ -722,11 +762,11 @@ CallStats.backend = null;
 CallStats.reportsQueue = [];
 
 /**
- * Whether the library was successfully initialized using its initialize method.
- * And whether we had successfully called addNewFabric at least once.
+ * Whether the library was successfully initialized(the backend) using its
+ * initialize method.
  * @type {boolean}
  */
-CallStats.initialized = false;
+CallStats.backendInitialized = false;
 
 /**
  * Part of the CallStats credentials - application ID

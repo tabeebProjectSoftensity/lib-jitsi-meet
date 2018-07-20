@@ -46,13 +46,22 @@ export const CONFERENCE_JOINED = 'conference.joined';
 export const CONFERENCE_LEFT = 'conference.left';
 
 /**
+ * Indicates that the connection to the conference has been established
+ * XXX This is currently fired whenVthe *ICE* connection enters 'connected'
+ * state for the first time.
+ */
+export const CONNECTION_ESTABLISHED = 'conference.connectionEstablished';
+
+/**
  * Indicates that the connection to the conference has been interrupted for some
  * reason.
+ * XXX This is currently fired when the *ICE* connection is interrupted.
  */
 export const CONNECTION_INTERRUPTED = 'conference.connectionInterrupted';
 
 /**
  * Indicates that the connection to the conference has been restored.
+ * XXX This is currently fired when the *ICE* connection is restored.
  */
 export const CONNECTION_RESTORED = 'conference.connectionRestored';
 
@@ -101,7 +110,7 @@ export const JVB121_STATUS = 'conference.jvb121Status';
 /**
  * You are kicked from the conference.
  */
-export const KICKED = 'conferenece.kicked';
+export const KICKED = 'conference.kicked';
 
 /**
  * The Last N set is changed.
@@ -122,6 +131,11 @@ export const LOCK_STATE_CHANGED = 'conference.lock_state_changed';
  * New text message was received.
  */
 export const MESSAGE_RECEIVED = 'conference.messageReceived';
+
+/**
+ * New private text message was received.
+ */
+export const PRIVATE_MESSAGE_RECEIVED = 'conference.privateMessageReceived';
 
 /**
  * Event fired when JVB sends notification about interrupted/restored user's
@@ -176,6 +190,18 @@ export const RECORDER_STATE_CHANGED = 'conference.recorderStateChanged';
  */
 export const VIDEO_SIP_GW_AVAILABILITY_CHANGED
     = 'conference.videoSIPGWAvailabilityChanged';
+
+/**
+ * Indicates that video SIP GW Session state changed.
+ * @param {options} event - {
+ *     {string} address,
+ *     {VideoSIPGWConstants} oldState,
+ *     {VideoSIPGWConstants} newState,
+ *     {string} displayName}
+ * }.
+ */
+export const VIDEO_SIP_GW_SESSION_STATE_CHANGED
+    = 'conference.videoSIPGWSessionStateChanged';
 
 /**
  * Indicates that start muted settings changed.
@@ -258,3 +284,8 @@ export const USER_ROLE_CHANGED = 'conference.roleChanged';
  * User status changed.
  */
 export const USER_STATUS_CHANGED = 'conference.statusChanged';
+
+/**
+ * Event indicates that the bot participant type cahnged.
+ */
+export const BOT_TYPE_CHANGED = 'conference.bot_type_changed';

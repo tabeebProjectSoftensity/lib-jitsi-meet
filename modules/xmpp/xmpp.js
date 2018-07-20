@@ -7,7 +7,7 @@ import 'strophejs-plugin-disco';
 import RandomUtil from '../util/RandomUtil';
 import * as JitsiConnectionErrors from '../../JitsiConnectionErrors';
 import * as JitsiConnectionEvents from '../../JitsiConnectionEvents';
-import RTCBrowserType from '../RTC/RTCBrowserType';
+import browser from '../browser';
 import initEmuc from './strophe.emuc';
 import initJingle from './strophe.jingle';
 import initStropheUtil from './strophe.util';
@@ -31,7 +31,12 @@ function createConnection(token, bosh = '/http-bind') {
         bosh += `${bosh.indexOf('?') === -1 ? '?' : '&'}token=${token}`;
     }
 
-    return new Strophe.Connection(bosh);
+    const conn = new Strophe.Connection(bosh);
+
+    // The default maxRetries is 5, which is too long.
+    conn.maxRetries = 3;
+
+    return conn;
 }
 
 /**
@@ -50,9 +55,7 @@ export default class XMPP extends Listenable {
         this.connection = null;
         this.disconnectInProgress = false;
         this.connectionTimes = {};
-        this.forceMuted = false;
         this.options = options;
-        this.connectParams = {};
         this.token = token;
         this.authenticatedUser = false;
         this._initStrophePlugins(this);
@@ -87,7 +90,7 @@ export default class XMPP extends Listenable {
         this.caps.addFeature('urn:xmpp:jingle:apps:rtp:audio');
         this.caps.addFeature('urn:xmpp:jingle:apps:rtp:video');
 
-        if (!this.options.disableRtx && RTCBrowserType.supportsRtx()) {
+        if (!this.options.disableRtx && browser.supportsRtx()) {
             this.caps.addFeature('urn:ietf:rfc:4588');
         }
 
@@ -103,7 +106,7 @@ export default class XMPP extends Listenable {
         // this.caps.addFeature('urn:ietf:rfc:5576'); // a=ssrc
 
         // Enable Lipsync ?
-        if (RTCBrowserType.isChrome() && this.options.enableLipSync !== false) {
+        if (browser.isChrome() && this.options.enableLipSync !== false) {
             logger.info('Lip-sync enabled !');
             this.caps.addFeature('http://jitsi.org/meet/lipsync');
         }
@@ -179,6 +182,11 @@ export default class XMPP extends Listenable {
                 this.connectionFailed = true;
             }
             this.lastErrorMsg = msg;
+            if (msg === 'giving-up') {
+                this.eventEmitter.emit(
+                    JitsiConnectionEvents.CONNECTION_FAILED,
+                    JitsiConnectionErrors.OTHER_ERROR, msg);
+            }
         } else if (status === Strophe.Status.DISCONNECTED) {
             // Stop ping interval
             this.connection.ping.stopInterval();
@@ -194,7 +202,10 @@ export default class XMPP extends Listenable {
             } else if (this.connectionFailed) {
                 this.eventEmitter.emit(
                     JitsiConnectionEvents.CONNECTION_FAILED,
-                    JitsiConnectionErrors.OTHER_ERROR, errMsg);
+                    JitsiConnectionErrors.OTHER_ERROR,
+                    errMsg,
+                    undefined, /* credentials */
+                    this._getConnectionFailedReasonDetails());
             } else if (wasIntentionalDisconnect) {
                 this.eventEmitter.emit(
                     JitsiConnectionEvents.CONNECTION_DISCONNECTED, errMsg);
@@ -302,10 +313,6 @@ export default class XMPP extends Listenable {
      * @param password
      */
     connect(jid, password) {
-        this.connectParams = {
-            jid,
-            password
-        };
         if (!jid) {
             const { anonymousdomain, domain } = this.options.hosts;
             let configDomain = anonymousdomain || domain;
@@ -416,9 +423,7 @@ export default class XMPP extends Listenable {
      * disconnect from the XMPP server (e.g. beforeunload, unload).
      */
     disconnect(ev) {
-        if (this.disconnectInProgress
-                || !this.connection
-                || !this.connection.connected) {
+        if (this.disconnectInProgress || !this.connection) {
             this.eventEmitter.emit(JitsiConnectionEvents.WRONG_STATE);
 
             return;
@@ -464,20 +469,82 @@ export default class XMPP extends Listenable {
      *
      */
     _initStrophePlugins() {
+        const iceConfig = {
+            jvb: { iceServers: [ ] },
+            p2p: { iceServers: [ ] }
+        };
+
         // FIXME: remove once we have a default config template. -saghul
         const defaultStunServers = [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' }
         ];
+
         const p2pStunServers = (this.options.p2p
             && this.options.p2p.stunServers) || defaultStunServers;
 
+        if (Array.isArray(p2pStunServers)) {
+            logger.info('P2P STUN servers: ', p2pStunServers);
+            iceConfig.p2p.iceServers = p2pStunServers;
+        }
+
+        if (this.options.p2p && this.options.p2p.iceTransportPolicy) {
+            logger.info('P2P ICE transport policy: ',
+                this.options.p2p.iceTransportPolicy);
+
+            iceConfig.p2p.iceTransportPolicy
+                = this.options.p2p.iceTransportPolicy;
+        }
+
         initEmuc(this);
-        initJingle(this, this.eventEmitter, p2pStunServers);
+        initJingle(this, this.eventEmitter, iceConfig);
         initStropheUtil();
         initPing(this);
         initRayo();
         initStropheLogger();
+    }
+
+    /**
+     * Returns details about connection failure. Shard change or is it after
+     * suspend.
+     * @returns {object} contains details about a connection failure.
+     * @private
+     */
+    _getConnectionFailedReasonDetails() {
+        const details = {};
+
+        // check for moving between shard if information is available
+        if (this.options.deploymentInfo
+            && this.options.deploymentInfo.shard
+            && this.connection._proto
+            && this.connection._proto.lastResponseHeaders) {
+
+            // split headers by line
+            const headersArr = this.connection._proto.lastResponseHeaders
+                .trim().split(/[\r\n]+/);
+            const headers = {};
+
+            headersArr.forEach(line => {
+                const parts = line.split(': ');
+                const header = parts.shift();
+                const value = parts.join(': ');
+
+                headers[header] = value;
+            });
+
+            /* eslint-disable camelcase */
+            details.shard_changed
+                = this.options.deploymentInfo.shard
+                    !== headers['x-jitsi-shard'];
+            /* eslint-enable camelcase */
+        }
+
+        /* eslint-disable camelcase */
+        // check for possible suspend
+        details.suspend_time = this.connection.ping.getPingSuspendTime();
+        /* eslint-enable camelcase */
+
+        return details;
     }
 }

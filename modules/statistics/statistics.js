@@ -1,11 +1,12 @@
 import EventEmitter from 'events';
 
+import { FEEDBACK } from '../../service/statistics/AnalyticsEvents';
 import analytics from './AnalyticsAdapter';
 import CallStats from './CallStats';
 import LocalStats from './LocalStatsCollector';
 import RTPStats from './RTPStatsCollector';
 
-import RTCBrowserType from '../RTC/RTCBrowserType';
+import browser from '../browser';
 import Settings from '../settings/Settings';
 import ScriptUtil from '../util/ScriptUtil';
 import JitsiTrackError from '../../JitsiTrackError';
@@ -71,7 +72,8 @@ function _initCallStatsBackend(options) {
             ? options.callStatsAliasName : userName,
         aliasName: options.swapUserNameAndAlias
             ? userName : options.callStatsAliasName,
-        applicationName: options.applicationName
+        applicationName: options.applicationName,
+        getWiFiStatsMethod: options.getWiFiStatsMethod
     })) {
         logger.error('CallStats Backend initialization failed bad');
     }
@@ -162,7 +164,7 @@ export default function Statistics(xmpp, options) {
             // requests to any third parties.
             && (Statistics.disableThirdPartyRequests !== true);
     if (this.callStatsIntegrationEnabled) {
-        if (RTCBrowserType.isReactNative()) {
+        if (browser.isReactNative()) {
             _initCallStatsBackend(this.options);
         } else {
             loadCallStatsAPI(this.options);
@@ -456,7 +458,7 @@ Statistics.prototype.sendConnectionResumeOrHoldEvent = function(tpc, isResume) {
 };
 
 /**
- * Notifies CallStats and analytics(if present) for ice connection failed
+ * Notifies CallStats and analytics (if present) for ice connection failed
  * @param {TraceablePeerConnection} tpc connection on which failure occurred.
  */
 Statistics.prototype.sendIceConnectionFailedEvent = function(tpc) {
@@ -465,7 +467,6 @@ Statistics.prototype.sendIceConnectionFailedEvent = function(tpc) {
     if (instance) {
         instance.sendIceConnectionFailedEvent();
     }
-    Statistics.analytics.sendEvent('connection.ice_failed');
 };
 
 /**
@@ -484,12 +485,15 @@ Statistics.prototype.sendMuteEvent = function(tpc, muted, type) {
  * Notifies CallStats for screen sharing events
  * @param start {boolean} true for starting screen sharing and
  * false for not stopping
+ * @param {string|null} ssrc - optional ssrc value, used only when
+ * starting screen sharing.
  */
-Statistics.prototype.sendScreenSharingEvent = function(start) {
-    for (const cs of this.callsStatsInstances.values()) {
-        cs.sendScreenSharingEvent(start);
-    }
-};
+Statistics.prototype.sendScreenSharingEvent
+    = function(start, ssrc) {
+        for (const cs of this.callsStatsInstances.values()) {
+            cs.sendScreenSharingEvent(start, ssrc);
+        }
+    };
 
 /**
  * Notifies the statistics module that we are now the dominant speaker of the
@@ -674,14 +678,17 @@ Statistics.sendLog = function(m) {
 /**
  * Sends the given feedback through CallStats.
  *
- * @param overall an integer between 1 and 5 indicating the user feedback
- * @param detailed detailed feedback from the user. Not yet used
+ * @param overall an integer between 1 and 5 indicating the user's rating.
+ * @param comment the comment from the user.
  */
-Statistics.prototype.sendFeedback = function(overall, detailed) {
-    CallStats.sendFeedback(this._getCallStatsConfID(), overall, detailed);
-    Statistics.analytics.sendEvent('feedback.rating',
-        { value: overall,
-            detailed });
+Statistics.prototype.sendFeedback = function(overall, comment) {
+    CallStats.sendFeedback(this._getCallStatsConfID(), overall, comment);
+    Statistics.analytics.sendEvent(
+        FEEDBACK,
+        {
+            rating: overall,
+            comment
+        });
 };
 
 Statistics.LOCAL_JID = require('../../service/statistics/constants').LOCAL_JID;
@@ -700,12 +707,46 @@ Statistics.reportGlobalError = function(error) {
 };
 
 /**
- * Sends event to analytics and callstats.
- * @param {string} eventName the event name.
- * @param {Object} data the data to be sent.
+ * Sends event to analytics and logs a message to the logger/console. Console
+ * messages might also be logged to callstats automatically.
+ *
+ * @param {string | Object} event the event name, or an object which
+ * represents the entire event.
+ * @param {Object} properties properties to attach to the event (if an event
+ * name as opposed to an event object is provided).
  */
-Statistics.sendEventToAll = function(eventName, data) {
-    this.analytics.sendEvent(eventName, data);
-    Statistics.sendLog(JSON.stringify({ name: eventName,
-        data }));
+Statistics.sendAnalyticsAndLog = function(event, properties = {}) {
+    if (!event) {
+        logger.warn('No event or event name given.');
+
+        return;
+    }
+
+    let eventToLog;
+
+    // Also support an API with a single object as an event.
+    if (typeof event === 'object') {
+        eventToLog = event;
+    } else {
+        eventToLog = {
+            name: event,
+            properties
+        };
+    }
+
+    logger.log(JSON.stringify(eventToLog));
+
+    // We do this last, because it may modify the object which is passed.
+    this.analytics.sendEvent(event, properties);
+};
+
+/**
+ * Sends event to analytics.
+ *
+ * @param {string | Object} eventName the event name, or an object which
+ * represents the entire event.
+ * @param {Object} properties properties to attach to the event
+ */
+Statistics.sendAnalytics = function(eventName, properties = {}) {
+    this.analytics.sendEvent(eventName, properties);
 };

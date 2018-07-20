@@ -1,6 +1,6 @@
+import { createTtfmEvent } from '../../service/statistics/AnalyticsEvents';
 import JitsiTrack from './JitsiTrack';
 import * as JitsiTrackEvents from '../../JitsiTrackEvents';
-import RTCBrowserType from './RTCBrowserType';
 import Statistics from '../statistics/statistics';
 
 const logger = require('jitsi-meet-logger').getLogger(__filename);
@@ -82,24 +82,8 @@ export default class JitsiRemoteTrack extends JitsiTrack {
      * @returns {void}
      */
     _bindMuteHandlers() {
-        // Use feature detection for finding what event handling function is
-        // supported. On Internet Explorer, which uses uses temasys/firebreath,
-        // the track will have attachEvent instead of addEventListener.
-        //
-        // FIXME it would be better to use recently added '_setHandler' method,
-        // but:
-        // 1. It does not allow to set more than one handler to the event
-        // 2. It does mix MediaStream('inactive') with MediaStreamTrack events
-        // 3. Allowing to bind more than one event handler requires too much
-        //    refactoring around camera issues detection.
-        if (this.track.addEventListener) {
-            this.track.addEventListener('mute', () => this._onTrackMute());
-            this.track.addEventListener('unmute', () => this._onTrackUnmute());
-        } else if (this.track.attachEvent) {
-            // FIXME Internet Explorer is not emitting out mute/unmute events.
-            this.track.attachEvent('onmute', () => this._onTrackMute());
-            this.track.attachEvent('onunmute', () => this._onTrackUnmute());
-        }
+        this.track.addEventListener('mute', () => this._onTrackMute());
+        this.track.addEventListener('unmute', () => this._onTrackUnmute());
     }
 
     /**
@@ -222,27 +206,30 @@ export default class JitsiRemoteTrack extends JitsiTrack {
         const gumDuration
             = !isNaN(gumEnd) && !isNaN(gumStart) ? gumEnd - gumStart : 0;
 
+        // Subtract the muc.joined-to-session-initiate duration because jicofo
+        // waits until there are 2 participants to start Jingle sessions.
         const ttfm = now
             - (this.conference.getConnectionTimes()['session.initiate']
-            - this.conference.getConnectionTimes()['muc.joined'])
+                - this.conference.getConnectionTimes()['muc.joined'])
             - gumDuration;
 
         this.conference.getConnectionTimes()[`${type}.ttfm`] = ttfm;
         console.log(`(TIME) TTFM ${type}:\t`, ttfm);
-        let eventName = `${type}.ttfm`;
 
-        if (this.hasBeenMuted) {
-            eventName += '.muted';
-        }
-        Statistics.analytics.sendEvent(eventName, { value: ttfm });
+        Statistics.sendAnalytics(createTtfmEvent(
+            {
+                'media_type': type,
+                muted: this.hasBeenMuted,
+                value: ttfm
+            }));
+
     }
 
     /**
      * Attach time to first media tracker only if there is conference and only
      * for the first element.
      * @param container the HTML container which can be 'video' or 'audio'
-     * element. It can also be 'object' element if Temasys plugin is in use and
-     * this method has been called previously on video or audio HTML element.
+     * element.
      * @private
      */
     _attachTTFMTracker(container) {
@@ -258,21 +245,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
             ttfmTrackerVideoAttached = true;
         }
 
-        if (RTCBrowserType.isTemasysPluginUsed()) {
-            // XXX Don't require Temasys unless it's to be used because it
-            // doesn't run on React Native, for example.
-            const AdapterJS = require('./adapter.screenshare');
-
-            // FIXME: this is not working for IE11
-            AdapterJS.addEvent(
-                container,
-                'play',
-                this._playCallback.bind(this));
-        } else {
-            container.addEventListener(
-                'canplay',
-                this._playCallback.bind(this));
-        }
+        container.addEventListener('canplay', this._playCallback.bind(this));
     }
 
     /**

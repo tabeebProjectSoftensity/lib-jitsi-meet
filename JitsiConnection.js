@@ -1,10 +1,14 @@
+import {
+    CONNECTION_DISCONNECTED as ANALYTICS_CONNECTION_DISCONNECTED,
+    createConnectionFailedEvent
+} from './service/statistics/AnalyticsEvents';
 import JitsiConference from './JitsiConference';
 import * as JitsiConnectionEvents from './JitsiConnectionEvents';
 import Statistics from './modules/statistics/statistics';
 import XMPP from './modules/xmpp/xmpp';
 
 /**
- * Creates new connection object for the Jitsi Meet server side video
+ * Creates a new connection object for the Jitsi Meet server side video
  * conferencing service. Provides access to the JitsiConference interface.
  * @param appID identification for the provider of Jitsi Meet video conferencing
  * services.
@@ -19,25 +23,32 @@ export default function JitsiConnection(appID, token, options) {
     this.options = options;
     this.xmpp = new XMPP(options, token);
 
+    /* eslint-disable max-params */
     this.addEventListener(JitsiConnectionEvents.CONNECTION_FAILED,
-        (errType, msg) => {
-            // sends analytics and callstats event
-            Statistics.sendEventToAll(`connection.failed.${errType}`,
-                { label: msg });
+        (errType, msg, credentials, details) => {
+            Statistics.sendAnalyticsAndLog(
+                createConnectionFailedEvent(errType, msg, details));
         });
+    /* eslint-enable max-params */
 
     this.addEventListener(JitsiConnectionEvents.CONNECTION_DISCONNECTED,
         msg => {
             // we can see disconnects from normal tab closing of the browser
             // and then there are no msgs, but we want to log only disconnects
             // when there is real error
+            // XXX Do we need the difference in handling between the log and
+            // analytics event here?
             if (msg) {
-                Statistics.analytics.sendEvent(
-                    `connection.disconnected.${msg}`);
+                Statistics.sendAnalytics(
+                    ANALYTICS_CONNECTION_DISCONNECTED,
+                    { message: msg });
             }
             Statistics.sendLog(
-                JSON.stringify({ id: 'connection.disconnected',
-                    msg }));
+                JSON.stringify(
+                    {
+                        id: ANALYTICS_CONNECTION_DISCONNECTED,
+                        msg
+                    }));
         });
 }
 

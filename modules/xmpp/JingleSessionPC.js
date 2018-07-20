@@ -1,5 +1,9 @@
 /* global __filename, $ */
 
+import {
+    ICE_DURATION,
+    ICE_STATE_CHANGED
+} from '../../service/statistics/AnalyticsEvents';
 import async from 'async';
 import { getLogger } from 'jitsi-meet-logger';
 import { $iq, Strophe } from 'strophe.js';
@@ -12,6 +16,7 @@ import SDPDiffer from './SDPDiffer';
 import SDPUtil from './SDPUtil';
 import SignalingLayerImpl from './SignalingLayerImpl';
 
+import RTCEvents from '../../service/RTC/RTCEvents';
 import Statistics from '../statistics/statistics';
 import XMPPEvents from '../../service/xmpp/XMPPEvents';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
@@ -24,6 +29,12 @@ const logger = getLogger(__filename);
  * @type {number}
  */
 const IQ_TIMEOUT = 10000;
+
+/*
+ * The default number of samples (per stat) to keep when webrtc stats gathering
+ * is enabled in TraceablePeerConnection.
+ */
+const DEFAULT_MAX_STATS = 300;
 
 /**
  *
@@ -237,12 +248,16 @@ export default class JingleSessionPC extends JingleSession {
         this.lasticecandidate = false;
 
         // True if reconnect is in progress
-        this.isreconnect = false;
+        this.isReconnect = false;
 
         // Set to true if the connection was ever stable
         this.wasstable = false;
 
         const pcOptions = { disableRtx: this.room.options.disableRtx };
+
+        if (this.room.options.gatherStats) {
+            pcOptions.maxstats = DEFAULT_MAX_STATS;
+        }
 
         if (this.isP2P) {
             // simulcast needs to be disabled for P2P (121) calls
@@ -267,6 +282,8 @@ export default class JingleSessionPC extends JingleSession {
             pcOptions.enableFirefoxSimulcast
                 = this.room.options.testing
                     && this.room.options.testing.enableFirefoxSimulcast;
+            pcOptions.enableLayerSuspension
+                = this.room.options.enableLayerSuspension;
         }
 
         this.peerconnection
@@ -312,13 +329,14 @@ export default class JingleSessionPC extends JingleSession {
                 }
             } else if (!this._gatheringReported) {
                 // End of gathering
-                let eventName = this.isP2P ? 'p2p.ice.' : 'ice.';
-
-                eventName += this.isInitiator ? 'initiator' : 'responder';
-                eventName += '.gatheringDuration';
-                Statistics.analytics.sendEvent(
-                    eventName,
-                    { value: now - this._gatheringStartedTimestamp });
+                Statistics.sendAnalytics(
+                    ICE_DURATION,
+                    {
+                        phase: 'gathering',
+                        value: now - this._gatheringStartedTimestamp,
+                        p2p: this.isP2P,
+                        initiator: this.isInitiator
+                    });
                 this._gatheringReported = true;
             }
             this.sendIceCandidate(candidate);
@@ -367,10 +385,17 @@ export default class JingleSessionPC extends JingleSession {
                 `(TIME) ICE ${this.peerconnection.iceConnectionState}`
                     + ` P2P? ${this.isP2P}:\t`,
                 now);
-            Statistics.analytics.sendEvent(
-                `${this.isP2P ? 'p2p.ice.' : 'ice.'}`
-                    + `${this.peerconnection.iceConnectionState}`,
-                { value: now });
+
+            Statistics.sendAnalytics(
+                ICE_STATE_CHANGED,
+                {
+                    p2p: this.isP2P,
+                    state: this.peerconnection.iceConnectionState,
+                    'signaling_state': this.peerconnection.signalingState,
+                    reconnect: this.isReconnect,
+                    value: now
+                });
+
             this.room.eventEmitter.emit(
                 XMPPEvents.ICE_CONNECTION_STATE_CHANGED,
                 this,
@@ -383,20 +408,21 @@ export default class JingleSessionPC extends JingleSession {
                 // Informs interested parties that the connection has been
                 // restored.
                 if (this.peerconnection.signalingState === 'stable') {
-                    if (this.isreconnect) {
+                    if (this.isReconnect) {
                         this.room.eventEmitter.emit(
                             XMPPEvents.CONNECTION_RESTORED, this);
                     }
                 }
 
                 if (!this.wasConnected && this.wasstable) {
-                    let eventName = this.isP2P ? 'p2p.ice.' : 'ice.';
 
-                    eventName += this.isInitiator ? 'initiator.' : 'responder.';
-                    Statistics.analytics.sendEvent(
-                        `${eventName}checksDuration`,
+                    Statistics.sendAnalytics(
+                        ICE_DURATION,
                         {
-                            value: now - this._iceCheckingStartedTimestamp
+                            phase: 'checking',
+                            value: now - this._iceCheckingStartedTimestamp,
+                            p2p: this.isP2P,
+                            initiator: this.isInitiator
                         });
 
                     // Switch between ICE gathering and ICE checking whichever
@@ -409,22 +435,26 @@ export default class JingleSessionPC extends JingleSession {
 
                     this.establishmentDuration = now - iceStarted;
 
-                    Statistics.analytics.sendEvent(
-                        `${eventName}establishmentDuration`,
+                    Statistics.sendAnalytics(
+                        ICE_DURATION,
                         {
-                            value: this.establishmentDuration
+                            phase: 'establishment',
+                            value: this.establishmentDuration,
+                            p2p: this.isP2P,
+                            initiator: this.isInitiator
                         });
+
                     this.wasConnected = true;
                     this.room.eventEmitter.emit(
                         XMPPEvents.CONNECTION_ESTABLISHED, this);
                 }
-                this.isreconnect = false;
+                this.isReconnect = false;
                 break;
             case 'disconnected':
                 if (this.closed) {
                     break;
                 }
-                this.isreconnect = true;
+                this.isReconnect = true;
 
                 // Informs interested parties that the connection has been
                 // interrupted.
@@ -449,6 +479,23 @@ export default class JingleSessionPC extends JingleSession {
 
         // The signaling layer will bind it's listeners at this point
         this.signalingLayer.setChatRoom(this.room);
+
+        if (!this.isP2P && this.room.options.enableLayerSuspension) {
+            // If this is the bridge session, we'll listen for
+            // IS_SELECTED_CHANGED events and notify the peer connection
+            this.rtc.addListener(RTCEvents.IS_SELECTED_CHANGED,
+                isSelected => {
+                    this.peerconnection.setIsSelected(isSelected);
+                    logger.info('Doing local O/A due to '
+                        + 'IS_SELECTED_CHANGED event');
+                    this.modificationQueue.push(finishedCallback => {
+                        this._renegotiate()
+                            .then(finishedCallback)
+                            .catch(finishedCallback);
+                    });
+                }
+            );
+        }
     }
 
     /**
@@ -929,16 +976,19 @@ export default class JingleSessionPC extends JingleSession {
      * @param failure function(error) called when we fail to accept new offer.
      */
     replaceTransport(jingleOfferElem, success, failure) {
-
-        // We need to first set an offer without the 'data' section to have the
-        // SCTP stack cleaned up. After that the original offer is set to have
-        // the SCTP connection established with the new bridge.
         this.room.eventEmitter.emit(XMPPEvents.ICE_RESTARTING, this);
+
+        // We need to first reject the 'data' section to have the SCTP stack
+        // cleaned up to signal the known data channel is now invalid. After
+        // that the original offer is set to have the SCTP connection
+        // established with the new bridge.
         const originalOffer = jingleOfferElem.clone();
 
-        jingleOfferElem.find('>content[name=\'data\']').remove();
+        jingleOfferElem
+            .find('>content[name=\'data\']')
+            .attr('senders', 'rejected');
 
-        // First set an offer without the 'data' section
+        // First set an offer with a rejected 'data' section
         this.setOfferAnswerCycle(
             jingleOfferElem,
             () => {
@@ -1627,40 +1677,42 @@ export default class JingleSessionPC extends JingleSession {
                 this.peerconnection.clearRecvonlySsrc();
                 this.peerconnection.generateRecvonlySsrc();
             }
-            if (oldTrack) {
-                this.peerconnection.removeTrack(oldTrack);
-            }
-            if (newTrack) {
-                this.peerconnection.addTrack(newTrack);
-            }
 
-            if ((oldTrack || newTrack)
-                && this.state === JingleSessionState.ACTIVE) {
-                this._renegotiate()
-                    .then(() => {
-                        const newLocalSDP
-                            = new SDP(
-                                this.peerconnection.localDescription.sdp);
+            this.peerconnection.replaceTrack(oldTrack, newTrack)
+            .then(shouldRenegotiate => {
+                if (shouldRenegotiate
+                    && (oldTrack || newTrack)
+                    && this.state === JingleSessionState.ACTIVE) {
+                    this._renegotiate()
+                        .then(() => {
+                            const newLocalSDP
+                                = new SDP(
+                                    this.peerconnection.localDescription.sdp);
 
-                        this.notifyMySSRCUpdate(
-                            new SDP(oldLocalSdp), newLocalSDP);
-                        finishedCallback();
-                    },
-                    finishedCallback /* will be called with en error */);
-            } else {
-                finishedCallback();
-            }
-        };
-
-        this.modificationQueue.push(
-            workFunction,
-            error => {
-                if (error) {
-                    logger.error('Replace track error:', error);
+                            this.notifyMySSRCUpdate(
+                                new SDP(oldLocalSdp), newLocalSDP);
+                            finishedCallback();
+                        },
+                        finishedCallback /* will be called with en error */);
                 } else {
-                    logger.info('Replace track done!');
+                    finishedCallback();
                 }
             });
+        };
+
+        return new Promise((resolve, reject) => {
+            this.modificationQueue.push(
+                workFunction,
+                error => {
+                    if (error) {
+                        logger.error('Replace track error:', error);
+                        reject(error);
+                    } else {
+                        logger.info('Replace track done!');
+                        resolve();
+                    }
+                });
+        });
     }
 
     /**

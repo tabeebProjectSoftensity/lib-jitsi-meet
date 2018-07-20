@@ -9,7 +9,7 @@ const AuthenticationEvents
     = require('../../service/authentication/AuthenticationEvents');
 const GlobalOnErrorHandler = require('../util/GlobalOnErrorHandler');
 
-import RTCBrowserType from '../RTC/RTCBrowserType';
+import browser from '../browser';
 import Settings from '../settings/Settings';
 
 /**
@@ -188,6 +188,29 @@ Moderator.prototype.createConferenceIq = function() {
             name: 'disableRtx',
             value: Boolean(this.options.conference.disableRtx)
         }).up();
+
+    if (this.options.conference.enableTcc !== undefined) {
+        elem.c(
+                'property', {
+                    name: 'enableTcc',
+                    value: Boolean(this.options.conference.enableTcc)
+                }).up();
+    }
+    if (this.options.conference.enableRemb !== undefined) {
+        elem.c(
+                'property', {
+                    name: 'enableRemb',
+                    value: Boolean(this.options.conference.enableRemb)
+                }).up();
+    }
+    if (this.options.conference.minParticipants !== undefined) {
+        elem.c(
+                'property', {
+                    name: 'minParticipants',
+                    value: this.options.conference.minParticipants
+                }).up();
+    }
+
     elem.c(
         'property', {
             name: 'enableLipSync',
@@ -228,7 +251,7 @@ Moderator.prototype.createConferenceIq = function() {
         break;
     }
 
-    if (openSctp && !RTCBrowserType.supportsDataChannels()) {
+    if (openSctp && !browser.supportsDataChannels()) {
         openSctp = false;
     }
 

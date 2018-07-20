@@ -6,14 +6,14 @@ const RTCEvents = {
 
     /**
      * Indicates error while create offer call.
-     * FIXME not used (yet), but hook up with create offer failure once added
      */
     CREATE_OFFER_FAILED: 'rtc.create_offer_failed',
-    RTC_READY: 'rtc.ready',
     DATA_CHANNEL_OPEN: 'rtc.data_channel_open',
     ENDPOINT_CONN_STATUS_CHANGED: 'rtc.endpoint_conn_status_changed',
     DOMINANT_SPEAKER_CHANGED: 'rtc.dominant_speaker_changed',
     LASTN_ENDPOINT_CHANGED: 'rtc.lastn_endpoint_changed',
+
+    IS_SELECTED_CHANGED: 'rtc.is_selected_change',
 
     /**
      * Event emitted when {@link RTC.setLastN} method is called to update with
@@ -21,6 +21,15 @@ const RTCEvents = {
      * The first argument is the value passed to {@link RTC.setLastN}.
      */
     LASTN_VALUE_CHANGED: 'rtc.lastn_value_changed',
+
+    /**
+     * Event emitted when ssrc for a local track is extracted and stored
+     * in {@link TraceablePeerConnection}.
+     * @param {JitsiLocalTrack} track which ssrc was updated
+     * @param {string} ssrc that was stored
+     */
+    LOCAL_TRACK_SSRC_UPDATED: 'rtc.local_track_ssrc_updated',
+
     AVAILABLE_DEVICES_CHANGED: 'rtc.available_devices_changed',
     TRACK_ATTACHED: 'rtc.track_attached',
 

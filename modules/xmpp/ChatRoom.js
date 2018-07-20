@@ -11,41 +11,32 @@ import * as MediaType from '../../service/RTC/MediaType';
 import XMPPEvents from '../../service/xmpp/XMPPEvents';
 
 import Moderator from './moderator';
-import Recorder from './recording';
 
 const logger = getLogger(__filename);
 
-const parser = {
-    packet2JSON(packet, nodes) {
-        const self = this;
-
-        // eslint-disable-next-line newline-per-chained-call
-        $(packet).children().each(function() {
-            // eslint-disable-next-line no-invalid-this
-            const tagName = $(this).prop('tagName');
+export const parser = {
+    packet2JSON(xmlElement, nodes) {
+        for (const child of Array.from(xmlElement.children)) {
             const node = {
-                tagName
+                attributes: {},
+                children: [],
+                tagName: child.tagName
             };
 
-            node.attributes = {};
-
-            // eslint-disable-next-line no-invalid-this
-            $($(this)[0].attributes).each((index, attr) => {
+            for (const attr of Array.from(child.attributes)) {
                 node.attributes[attr.name] = attr.value;
-            });
-
-            // eslint-disable-next-line no-invalid-this
-            const text = Strophe.getText($(this)[0]);
+            }
+            const text = Strophe.getText(child);
 
             if (text) {
-                node.value = text;
+                // Using Strophe.getText will do work for traversing all direct
+                // child text nodes but returns an escaped value, which is not
+                // desirable at this point.
+                node.value = Strophe.xmlunescape(text);
             }
-            node.children = [];
             nodes.push(node);
-
-            // eslint-disable-next-line no-invalid-this
-            self.packet2JSON($(this), node.children);
-        });
+            this.packet2JSON(child, node.children);
+        }
     },
     json2packet(nodes, packet) {
         for (let i = 0; i < nodes.length; i++) {
@@ -86,20 +77,21 @@ function filterNodeFromPresenceJSON(pres, nodeName) {
 }
 
 /**
- * Constants used to verify if a given JSON message via the MUC should be
- * considered as a ENDPOINT_MESSAGE
+ * The name of the field used to recognize a chat message as carrying a JSON
+ * payload from another endpoint.
+ * If the json-message of a chat message contains a valid JSON object, and the
+ * JSON has this key, then it is a valid json-message to be sent.
  */
-const VALID_FIELD_NAMES = [ 'jitsi-meet-muc-msg-topic', 'payload' ];
+export const JITSI_MEET_MUC_TYPE = 'type';
 
 /**
  * Check if the given argument is a valid JSON ENDPOINT_MESSAGE string by
- * parsing it and checking if it has a field called 'jitsi-meet-muc-msg-topic'
- * and a field called 'payload'
+ * parsing it and checking if it has a field called 'type'.
  *
  * @param {string} jsonString check if this string is a valid json string
- * and contains the special structure
+ * and contains the special structure.
  * @returns {boolean, object} if given object is a valid JSON string, return
- * the json object. Otherwise, return false;
+ * the json object. Otherwise, returns false.
  */
 function tryParseJSONAndVerify(jsonString) {
     try {
@@ -113,17 +105,14 @@ function tryParseJSONAndVerify(jsonString) {
         // so we must check for that, too.
         // Thankfully, null is falsey, so this suffices:
         if (json && typeof json === 'object') {
-            const topic = json[VALID_FIELD_NAMES[0]];
-            const payload = json[VALID_FIELD_NAMES[1]];
+            const type = json[JITSI_MEET_MUC_TYPE];
 
-            if ((typeof topic === 'string' || topic instanceof String)
-                && payload) {
-
+            if (typeof type !== 'undefined') {
                 return json;
             }
 
             logger.debug('parsing valid json but does not have correct '
-                + 'structure', 'topic: ', topic, 'payload: ', payload);
+                + 'structure', 'topic: ', type);
         }
     } catch (e) {
 
@@ -401,28 +390,25 @@ export default class ChatRoom extends Listenable {
      */
     onPresence(pres) {
         const from = pres.getAttribute('from');
-
-        // Parse roles.
         const member = {};
+        const statusEl = pres.getElementsByTagName('status')[0];
 
-        member.show = $(pres).find('>show').text();
-        const $statusNode = $(pres).find('>status');
-        const hasStatus = $statusNode.length;
-
-        if (hasStatus) {
-            member.status = $statusNode.text();
+        if (statusEl) {
+            member.status = statusEl.textContent || '';
         }
         let hasStatusUpdate = false;
-
+        const xElement
+            = pres.getElementsByTagNameNS(
+                'http://jabber.org/protocol/muc#user', 'x')[0];
         const mucUserItem
-            = $(pres).find(
-                '>x[xmlns="http://jabber.org/protocol/muc#user"]>item');
+            = xElement && xElement.getElementsByTagName('item')[0];
 
-        member.affiliation = mucUserItem.attr('affiliation');
-        member.role = mucUserItem.attr('role');
+        member.affiliation
+            = mucUserItem && mucUserItem.getAttribute('affiliation');
+        member.role = mucUserItem && mucUserItem.getAttribute('role');
 
         // Focus recognition
-        const jid = mucUserItem.attr('jid');
+        const jid = mucUserItem && mucUserItem.getAttribute('jid');
 
         member.jid = jid;
         member.isFocus
@@ -432,20 +418,63 @@ export default class ChatRoom extends Listenable {
                 && this.options.hiddenDomain
                     === jid.substring(jid.indexOf('@') + 1, jid.indexOf('/'));
 
-        $(pres).find('>x').remove();
+        this.eventEmitter.emit(XMPPEvents.PRESENCE_RECEIVED, {
+            fromHiddenDomain: member.isHiddenDomain,
+            presence: pres
+        });
+
+        const xEl = pres.querySelector('x');
+
+        if (xEl) {
+            xEl.remove();
+        }
+
         const nodes = [];
 
         parser.packet2JSON(pres, nodes);
         this.lastPresences[from] = nodes;
-        let jibri = null;
 
         // process nodes to extract data needed for MUC_JOINED and
         // MUC_MEMBER_JOINED events
+        const extractIdentityInformation = node => {
+            const identity = {};
+            const userInfo = node.children.find(c => c.tagName === 'user');
+
+            if (userInfo) {
+                identity.user = {};
+                for (const tag of [ 'id', 'name', 'avatar' ]) {
+                    const child
+                        = userInfo.children.find(c => c.tagName === tag);
+
+                    if (child) {
+                        identity.user[tag] = child.value;
+                    }
+                }
+            }
+            const groupInfo = node.children.find(c => c.tagName === 'group');
+
+            if (groupInfo) {
+                identity.group = groupInfo.value;
+            }
+
+            return identity;
+        };
 
         for (let i = 0; i < nodes.length; i++) {
             const node = nodes[i];
 
             switch (node.tagName) {
+            case 'bot': {
+                const { attributes } = node;
+
+                if (!attributes) {
+                    break;
+                }
+                const { type } = attributes;
+
+                member.botType = type;
+                break;
+            }
             case 'nick':
                 member.nick = node.value;
                 break;
@@ -454,6 +483,9 @@ export default class ChatRoom extends Listenable {
                 break;
             case 'stats-id':
                 member.statsID = node.value;
+                break;
+            case 'identity':
+                member.identity = extractIdentityInformation(node);
                 break;
             }
         }
@@ -486,19 +518,28 @@ export default class ChatRoom extends Listenable {
             // new participant
             this.members[from] = member;
             logger.log('entered', from, member);
+            hasStatusUpdate = member.status !== undefined;
             if (member.isFocus) {
                 this._initFocus(from, jid);
             } else {
+                // identity is being added to member joined, so external
+                // services can be notified for that (currently identity is
+                // not used inside library)
                 this.eventEmitter.emit(
                     XMPPEvents.MUC_MEMBER_JOINED,
                     from,
                     member.nick,
                     member.role,
                     member.isHiddenDomain,
-                    member.statsID);
-            }
+                    member.statsID,
+                    member.status,
+                    member.identity,
+                    member.botType);
 
-            hasStatusUpdate = member.status !== undefined;
+                // we are reporting the status with the join
+                // so we do not want a second event about status update
+                hasStatusUpdate = false;
+            }
         } else {
             // Presence update for existing participant
             // Watch role change:
@@ -508,6 +549,15 @@ export default class ChatRoom extends Listenable {
                 memberOfThis.role = member.role;
                 this.eventEmitter.emit(
                     XMPPEvents.MUC_ROLE_CHANGED, from, member.role);
+            }
+
+            // fire event that botType had changed
+            if (memberOfThis.botType !== member.botType) {
+                memberOfThis.botType = member.botType;
+                this.eventEmitter.emit(
+                    XMPPEvents.MUC_MEMBER_BOT_TYPE_CHANGED,
+                    from,
+                    member.botType);
             }
 
             if (member.isFocus) {
@@ -563,9 +613,6 @@ export default class ChatRoom extends Listenable {
                     this.eventEmitter.emit(XMPPEvents.BRIDGE_DOWN);
                 }
                 break;
-            case 'jibri-recording-status':
-                jibri = node;
-                break;
             case 'transcription-status': {
                 const { attributes } = node;
 
@@ -609,13 +656,6 @@ export default class ChatRoom extends Listenable {
                 from,
                 member.status);
         }
-
-        if (jibri) {
-            this.lastJibri = jibri;
-            if (this.recording) {
-                this.recording.handleJibriPresence(jibri);
-            }
-        }
     }
 
     /**
@@ -625,14 +665,7 @@ export default class ChatRoom extends Listenable {
      */
     _initFocus(from, mucJid) {
         this.focusMucJid = from;
-        if (!this.recording) {
-            this.recording = new Recorder(this.options.recordingType,
-                this.eventEmitter, this.connection, this.focusMucJid,
-                this.options.jirecon, this.roomjid);
-            if (this.lastJibri) {
-                this.recording.handleJibriPresence(this.lastJibri);
-            }
-        }
+
         logger.info(`Ignore focus: ${from}, real JID: ${mucJid}`);
     }
 
@@ -671,15 +704,24 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     *
-     * @param body
+     * Send text message to the other participants in the conference
+     * @param message
+     * @param elementName
      * @param nickname
      */
-    sendMessage(body, nickname) {
+    sendMessage(message, elementName, nickname) {
         const msg = $msg({ to: this.roomjid,
             type: 'groupchat' });
 
-        msg.c('body', body).up();
+        // We are adding the message in a packet extension. If this element
+        // is different from 'body', we add a custom namespace.
+        // e.g. for 'json-message' extension of message stanza.
+        if (elementName === 'body') {
+            msg.c(elementName, message).up();
+        } else {
+            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message)
+                .up();
+        }
         if (nickname) {
             msg.c('nick', { xmlns: 'http://jabber.org/protocol/nick' })
                 .t(nickname)
@@ -687,8 +729,42 @@ export default class ChatRoom extends Listenable {
                 .up();
         }
         this.connection.send(msg);
-        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, body);
+        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, message);
     }
+
+    /* eslint-disable max-params */
+    /**
+     * Send private text message to another participant of the conference
+     * @param id id/muc resource of the receiver
+     * @param message
+     * @param elementName
+     * @param nickname
+     */
+    sendPrivateMessage(id, message, elementName, nickname) {
+        const msg = $msg({ to: `${this.roomjid}/${id}`,
+            type: 'chat' });
+
+        // We are adding the message in packet. If this element is different
+        // from 'body', we add our custom namespace for the same.
+        // e.g. for 'json-message' message extension.
+        if (elementName === 'body') {
+            msg.c(elementName, message).up();
+        } else {
+            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message)
+                .up();
+        }
+        if (nickname) {
+            msg.c('nick', { xmlns: 'http://jabber.org/protocol/nick' })
+                .t(nickname)
+                .up()
+                .up();
+        }
+
+        this.connection.send(msg);
+        this.eventEmitter.emit(
+            XMPPEvents.SENDING_PRIVATE_CHAT_MESSAGE, message);
+    }
+    /* eslint-enable max-params */
 
     /**
      *
@@ -709,7 +785,6 @@ export default class ChatRoom extends Listenable {
      * whether this is the focus that left
      */
     onParticipantLeft(jid, skipEvents) {
-
         delete this.lastPresences[jid];
 
         if (skipEvents) {
@@ -849,20 +924,27 @@ export default class ChatRoom extends Listenable {
                     .length) {
             this.discoRoomInfo();
         }
+        const jsonMessage = $(msg).find('>json-message').text();
+        const parsedJson = tryParseJSONAndVerify(jsonMessage);
 
-        const json = tryParseJSONAndVerify(txt);
-
-        if (json) {
+        // We emit this event if the message is a valid json, and is not
+        // delivered after a delay, i.e. stamp is undefined.
+        // e.g. - subtitles should not be displayed if delayed.
+        if (parsedJson && stamp === undefined) {
             this.eventEmitter.emit(XMPPEvents.JSON_MESSAGE_RECEIVED,
-                from, json);
+                from, parsedJson);
 
             return;
         }
 
         if (txt) {
-            logger.log('chat', nick, txt);
-            this.eventEmitter.emit(XMPPEvents.MESSAGE_RECEIVED,
-                from, nick, txt, this.myroomjid, stamp);
+            if (type === 'chat') {
+                this.eventEmitter.emit(XMPPEvents.PRIVATE_MESSAGE_RECEIVED,
+                        from, nick, txt, this.myroomjid, stamp);
+            } else if (type === 'groupchat') {
+                this.eventEmitter.emit(XMPPEvents.MESSAGE_RECEIVED,
+                        from, nick, txt, this.myroomjid, stamp);
+            }
         }
     }
 
@@ -978,7 +1060,7 @@ export default class ChatRoom extends Listenable {
                         .up();
 
                     // Fixes a bug in prosody 0.9.+
-                    // https://code.google.com/p/lxmppd/issues/detail?id=373
+                    // https://prosody.im/issues/issue/373
                     formsubmit
                         .c('field', { 'var': 'muc#roomconfig_whois' })
                         .c('value')
@@ -1216,47 +1298,6 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     * Returns true if the recording is supproted and false if not.
-     */
-    isRecordingSupported() {
-        if (this.recording) {
-            return this.recording.isSupported();
-        }
-
-        return false;
-    }
-
-    /**
-     * Returns null if the recording is not supported, "on" if the recording
-     * started and "off" if the recording is not started.
-     */
-    getRecordingState() {
-        return this.recording ? this.recording.getState() : undefined;
-    }
-
-    /**
-     * Returns the url of the recorded video.
-     */
-    getRecordingURL() {
-        return this.recording ? this.recording.getURL() : null;
-    }
-
-    /**
-     * Starts/stops the recording
-     * @param token token for authentication
-     * @param statusChangeHandler {function} receives the new status as
-     * argument.
-     */
-    toggleRecording(options, statusChangeHandler) {
-        if (this.recording) {
-            return this.recording.toggleRecording(options, statusChangeHandler);
-        }
-
-        return statusChangeHandler('error',
-            new Error('The conference is not created yet!'));
-    }
-
-    /**
      * Returns true if the SIP calls are supported and false otherwise
      */
     isSIPCallingSupported() {
@@ -1322,7 +1363,7 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     *
+     * TODO: Document
      * @param iq
      */
     onMute(iq) {
@@ -1331,19 +1372,19 @@ export default class ChatRoom extends Listenable {
         if (from !== this.focusMucJid) {
             logger.warn('Ignored mute from non focus peer');
 
-            return false;
+            return;
         }
         const mute = $(iq).find('mute');
 
-        if (mute.length) {
-            const doMuteAudio = mute.text() === 'true';
-
-            this.eventEmitter.emit(
-                XMPPEvents.AUDIO_MUTED_BY_FOCUS,
-                doMuteAudio);
+        if (mute.length && mute.text() === 'true') {
+            this.eventEmitter.emit(XMPPEvents.AUDIO_MUTED_BY_FOCUS);
+        } else {
+            // XXX Why do we support anything but muting? Why do we encode the
+            // value in the text of the element? Why do we use a separate XML
+            // namespace?
+            logger.warn('Ignoring a mute request which does not explicitly '
+                + 'specify a positive mute command.');
         }
-
-        return true;
     }
 
     /**

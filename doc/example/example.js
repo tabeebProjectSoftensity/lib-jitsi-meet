@@ -151,13 +151,6 @@ function onConnectionSuccess() {
         JitsiMeetJS.events.conference.TRACK_AUDIO_LEVEL_CHANGED,
         (userID, audioLevel) => console.log(`${userID} - ${audioLevel}`));
     room.on(
-        JitsiMeetJS.events.conference.RECORDER_STATE_CHANGED,
-        () =>
-            console.log(
-                `${room.isRecordingSupported()} - ${
-                    room.getRecordingState()} - ${
-                    room.getRecordingURL()}`));
-    room.on(
         JitsiMeetJS.events.conference.PHONE_NUMBER_CHANGED,
         () => console.log(`${room.getPhoneNumber()} - ${room.getPhonePin()}`));
     room.join();
@@ -198,7 +191,7 @@ function disconnect() {
  */
 function unload() {
     for (let i = 0; i < localTracks.length; i++) {
-        localTracks[i].stop();
+        localTracks[i].dispose();
     }
     room.leave();
     connection.disconnect();
@@ -260,50 +253,35 @@ const initOptions = {
     // Required version of Chrome extension
     desktopSharingChromeMinExtVersion: '0.1',
 
-    // The ID of the jidesha extension for Firefox. If null, we assume that no
-    // extension is required.
-    desktopSharingFirefoxExtId: null,
-
     // Whether desktop sharing should be disabled on Firefox.
-    desktopSharingFirefoxDisabled: true,
-
-    // The maximum version of Firefox which requires a jidesha extension.
-    // Example: if set to 41, we will require the extension for Firefox versions
-    // up to and including 41. On Firefox 42 and higher, we will run without the
-    // extension.
-    // If set to -1, an extension will be required for all versions of Firefox.
-    desktopSharingFirefoxMaxVersionExtRequired: -1,
-
-    // The URL to the Firefox extension for desktop sharing.
-    desktopSharingFirefoxExtensionURL: null
+    desktopSharingFirefoxDisabled: true
 };
 
-JitsiMeetJS.init(initOptions)
-    .then(() => {
-        connection = new JitsiMeetJS.JitsiConnection(null, null, options);
+JitsiMeetJS.init(initOptions);
 
-        connection.addEventListener(
-            JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED,
-            onConnectionSuccess);
-        connection.addEventListener(
-            JitsiMeetJS.events.connection.CONNECTION_FAILED,
-            onConnectionFailed);
-        connection.addEventListener(
-            JitsiMeetJS.events.connection.CONNECTION_DISCONNECTED,
-            disconnect);
+connection = new JitsiMeetJS.JitsiConnection(null, null, options);
 
-        JitsiMeetJS.mediaDevices.addEventListener(
-            JitsiMeetJS.events.mediaDevices.DEVICE_LIST_CHANGED,
-            onDeviceListChanged);
+connection.addEventListener(
+    JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED,
+    onConnectionSuccess);
+connection.addEventListener(
+    JitsiMeetJS.events.connection.CONNECTION_FAILED,
+    onConnectionFailed);
+connection.addEventListener(
+    JitsiMeetJS.events.connection.CONNECTION_DISCONNECTED,
+    disconnect);
 
-        connection.connect();
-        JitsiMeetJS.createLocalTracks({ devices: [ 'audio', 'video' ] })
-            .then(onLocalTracks)
-            .catch(error => {
-                throw error;
-            });
-    })
-    .catch(error => console.log(error));
+JitsiMeetJS.mediaDevices.addEventListener(
+    JitsiMeetJS.events.mediaDevices.DEVICE_LIST_CHANGED,
+    onDeviceListChanged);
+
+connection.connect();
+
+JitsiMeetJS.createLocalTracks({ devices: [ 'audio', 'video' ] })
+    .then(onLocalTracks)
+    .catch(error => {
+        throw error;
+    });
 
 if (JitsiMeetJS.mediaDevices.isDeviceChangeAvailable('output')) {
     JitsiMeetJS.mediaDevices.enumerateDevices(devices => {

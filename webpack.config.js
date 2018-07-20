@@ -1,7 +1,7 @@
 /* global __dirname */
 
-const child_process = require('child_process'); // eslint-disable-line camelcase
 const process = require('process');
+const UglifyJsPlugin = require('uglifyjs-webpack-plugin');
 const webpack = require('webpack');
 
 const minimize
@@ -16,20 +16,16 @@ const plugins = [
 
 if (minimize) {
     plugins.push(new webpack.optimize.ModuleConcatenationPlugin());
-    plugins.push(new webpack.optimize.UglifyJsPlugin({
-        compress: {
-            warnings: true
-        },
+    plugins.push(new UglifyJsPlugin({
+        cache: true,
         extractComments: true,
+        parallel: true,
         sourceMap: true
     }));
 }
 
-module.exports = {
+const config = {
     devtool: 'source-map',
-    entry: {
-        'lib-jitsi-meet': './index.js'
-    },
     module: {
         rules: [ {
             // Version this build of the lib-jitsi-meet library.
@@ -38,16 +34,7 @@ module.exports = {
             options: {
                 flags: 'g',
                 replace:
-                    child_process.execSync( // eslint-disable-line camelcase
-                        `${__dirname}/get-version.sh`)
-
-                        // The type of the return value of
-                        // child_process.execSync is either Buffer or String.
-                        .toString()
-
-                        // Shells may automatically append CR and/or LF
-                        // characters to the output.
-                        .trim(),
+                    process.env.LIB_JITSI_MEET_COMMIT_HASH || 'development',
                 search: '{#COMMIT_HASH#}'
             },
             test: `${__dirname}/JitsiMeetJS.js`
@@ -55,8 +42,7 @@ module.exports = {
             // Transpile ES2015 (aka ES6) to ES5.
 
             exclude: [
-                `${__dirname}/modules/RTC/adapter.screenshare.js`,
-                `${__dirname}/node_modules/`
+                new RegExp(`${__dirname}/node_modules/(?!js-utils)`)
             ],
             loader: 'babel-loader',
             options: {
@@ -82,9 +68,19 @@ module.exports = {
     },
     output: {
         filename: `[name]${minimize ? '.min' : ''}.js`,
-        library: 'JitsiMeetJS',
-        libraryTarget: 'umd',
         sourceMapFilename: `[name].${minimize ? 'min' : 'js'}.map`
     },
     plugins
 };
+
+module.exports = [
+    Object.assign({}, config, {
+        entry: {
+            'lib-jitsi-meet': './index.js'
+        },
+        output: Object.assign({}, config.output, {
+            library: 'JitsiMeetJS',
+            libraryTarget: 'umd'
+        })
+    })
+];

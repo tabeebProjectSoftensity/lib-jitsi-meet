@@ -1,5 +1,6 @@
 /* global __filename */
 
+import { createGetUserMediaEvent } from './service/statistics/AnalyticsEvents';
 import AuthUtil from './modules/util/AuthUtil';
 import * as ConnectionQualityEvents
     from './service/connectivity/ConnectionQualityEvents';
@@ -11,35 +12,38 @@ import * as JitsiConnectionErrors from './JitsiConnectionErrors';
 import * as JitsiConnectionEvents from './JitsiConnectionEvents';
 import JitsiMediaDevices from './JitsiMediaDevices';
 import * as JitsiMediaDevicesEvents from './JitsiMediaDevicesEvents';
-import JitsiRecorderErrors from './JitsiRecorderErrors';
 import JitsiTrackError from './JitsiTrackError';
 import * as JitsiTrackErrors from './JitsiTrackErrors';
 import * as JitsiTrackEvents from './JitsiTrackEvents';
 import * as JitsiTranscriptionStatus from './JitsiTranscriptionStatus';
 import LocalStatsCollector from './modules/statistics/LocalStatsCollector';
-import Recording from './modules/xmpp/recording';
 import Logger from 'jitsi-meet-logger';
 import * as MediaType from './service/RTC/MediaType';
 import Resolutions from './service/RTC/Resolutions';
 import { ParticipantConnectionStatus }
     from './modules/connectivity/ParticipantConnectionStatus';
 import RTC from './modules/RTC/RTC';
-import RTCBrowserType from './modules/RTC/RTCBrowserType';
-import RTCUIHelper from './modules/RTC/RTCUIHelper';
+import browser from './modules/browser';
 import ScriptUtil from './modules/util/ScriptUtil';
-import Settings from './modules/settings/Settings';
+import recordingConstants from './modules/recording/recordingConstants';
 import Statistics from './modules/statistics/statistics';
 import * as VideoSIPGWConstants from './modules/videosipgw/VideoSIPGWConstants';
 
 const logger = Logger.getLogger(__filename);
 
-// The amount of time to wait until firing
-// JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN event
+/**
+ * The amount of time to wait until firing
+ * {@link JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN} event.
+ */
 const USER_MEDIA_PERMISSION_PROMPT_TIMEOUT = 1000;
 
 /**
+ * Gets the next lowest desirable resolution to try for a camera. If the given
+ * resolution is already the lowest acceptable resolution, returns {@code null}.
  *
- * @param resolution
+ * @param resolution the current resolution
+ * @return the next lowest resolution from the given one, or {@code null} if it
+ * is already the lowest acceptable resolution.
  */
 function getLowerResolution(resolution) {
     if (!Resolutions[resolution]) {
@@ -58,46 +62,75 @@ function getLowerResolution(resolution) {
         }
     });
 
+    if (resName === resolution) {
+        resName = null;
+    }
+
     return resName;
 }
 
 /**
- * Checks the available devices in options and concatenate the data to the
- * name, which will be used as analytics event name. Adds resolution for the
- * devices.
- * @param name name of event
- * @param options gum options
- * @returns {*}
+ * Extracts from an 'options' objects with a specific format (TODO what IS the
+ * format?) the attributes which are to be logged in analytics events.
+ *
+ * @param options gum options (???)
+ * @returns {*} the attributes to attach to analytics events.
  */
-function addDeviceTypeToAnalyticsEvent(name, options) {
-    let ret = name;
+function getAnalyticsAttributesFromOptions(options) {
+    const attributes = {
+        'audio_requested':
+            options.devices.includes('audio'),
+        'video_requested':
+            options.devices.includes('video'),
+        'screen_sharing_requested':
+            options.devices.includes('desktop')
+    };
 
-    if (options.devices.indexOf('audio') !== -1) {
-        ret += '.audio';
-    }
-    if (options.devices.indexOf('desktop') !== -1) {
-        ret += '.desktop';
-    }
-    if (options.devices.indexOf('video') !== -1) {
-        // we have video add resolution
-        ret += `.video.${options.resolution}`;
+    if (attributes.video_requested) {
+        attributes.resolution = options.resolution;
     }
 
-    return ret;
+    return attributes;
 }
 
 /**
- * The public API of the Jitsi Meet library (a.k.a. JitsiMeetJS).
+ * Tries to deal with the following problem: {@code JitsiMeetJS} is not only
+ * this module, it's also a global (i.e. attached to {@code window}) namespace
+ * for all globals of the projects in the Jitsi Meet family. If lib-jitsi-meet
+ * is loaded through an HTML {@code script} tag, {@code JitsiMeetJS} will
+ * automatically be attached to {@code window} by webpack. Unfortunately,
+ * webpack's source code does not check whether the global variable has already
+ * been assigned and overwrites it. Which is OK for the module
+ * {@code JitsiMeetJS} but is not OK for the namespace {@code JitsiMeetJS}
+ * because it may already contain the values of other projects in the Jitsi Meet
+ * family. The solution offered here works around webpack by merging all
+ * existing values of the namespace {@code JitsiMeetJS} into the module
+ * {@code JitsiMeetJS}.
+ *
+ * @param {Object} module - The module {@code JitsiMeetJS} (which will be
+ * exported and may be attached to {@code window} by webpack later on).
+ * @private
+ * @returns {Object} - A {@code JitsiMeetJS} module which contains all existing
+ * value of the namespace {@code JitsiMeetJS} (if any).
  */
-export default {
+function _mergeNamespaceAndModule(module) {
+    return (
+        typeof window.JitsiMeetJS === 'object'
+            ? Object.assign({}, window.JitsiMeetJS, module)
+            : module);
+}
+
+/**
+ * The public API of the Jitsi Meet library (a.k.a. {@code JitsiMeetJS}).
+ */
+export default _mergeNamespaceAndModule({
 
     version: '{#COMMIT_HASH#}',
 
     JitsiConnection,
     constants: {
         participantConnectionStatus: ParticipantConnectionStatus,
-        recordingStatus: Recording.status,
-        recordingTypes: Recording.types,
+        recording: recordingConstants,
         sipVideoGW: VideoSIPGWConstants,
         transcriptionStatus: JitsiTranscriptionStatus
     },
@@ -111,7 +144,6 @@ export default {
     errors: {
         conference: JitsiConferenceErrors,
         connection: JitsiConnectionErrors,
-        recorder: JitsiRecorderErrors,
         track: JitsiTrackErrors
     },
     errorTypes: {
@@ -120,7 +152,7 @@ export default {
     logLevels: Logger.levels,
     mediaDevices: JitsiMediaDevices,
     analytics: Statistics.analytics,
-    init(options) {
+    init(options = {}) {
         Statistics.init(options);
 
         // Initialize global window.connectionTimes
@@ -130,6 +162,7 @@ export default {
         }
 
         if (options.enableAnalyticsLogging !== true) {
+            logger.warn('Analytics disabled, disposing.');
             this.analytics.dispose();
         }
 
@@ -138,8 +171,8 @@ export default {
                 this.getGlobalOnErrorHandler.bind(this));
         }
 
-        // Log deployment-specific information, if available.
-        // Defined outside the application by individual deployments
+        // Log deployment-specific information, if available. Defined outside
+        // the application by individual deployments
         const aprops = options.deploymentInfo;
 
         if (aprops && Object.keys(aprops).length > 0) {
@@ -165,22 +198,37 @@ export default {
             Statistics.sendLog(JSON.stringify(logObject));
         }
 
-        return RTC.init(options || {});
+        return RTC.init(options);
     },
 
     /**
      * Returns whether the desktop sharing is enabled or not.
+     *
      * @returns {boolean}
      */
     isDesktopSharingEnabled() {
         return RTC.isDesktopSharingEnabled();
     },
+
+    /**
+     * Returns whether the current execution environment supports WebRTC (for
+     * use within this library).
+     *
+     * @returns {boolean} {@code true} if WebRTC is supported in the current
+     * execution environment (for use within this library); {@code false},
+     * otherwise.
+     */
+    isWebRtcSupported() {
+        return RTC.isWebRtcSupported();
+    },
+
     setLogLevel(level) {
         Logger.setLogLevel(level);
     },
 
     /**
      * Sets the log level to the <tt>Logger</tt> instance with given id.
+     *
      * @param {Logger.levels} level the logging level to be set
      * @param {string} id the logger id to which new logging level will be set.
      * Usually it's the name of the JavaScript source file including the path
@@ -192,6 +240,7 @@ export default {
 
     /**
      * Registers new global logger transport to the library logging framework.
+     *
      * @param globalTransport
      * @see Logger.addGlobalTransport
      */
@@ -201,6 +250,7 @@ export default {
 
     /**
      * Removes global logging transport from the library logging framework.
+     *
      * @param globalTransport
      * @see Logger.removeGlobalTransport
      */
@@ -210,6 +260,7 @@ export default {
 
     /**
      * Creates the media tracks and returns them trough the callback.
+     *
      * @param options Object with properties / settings specifying the tracks
      * which should be created. should be created or some additional
      * configurations about resolution for example.
@@ -244,12 +295,15 @@ export default {
      * will finish the execution with rejected Promise.
      *
      * @param {boolean} (firePermissionPromptIsShownEvent) - if event
-     *      JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN should be fired
-     * @returns {Promise.<{Array.<JitsiTrack>}, JitsiConferenceError>}
-     *     A promise that returns an array of created JitsiTracks if resolved,
-     *     or a JitsiConferenceError if rejected.
+     * JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN should be fired
+     * @param originalOptions - internal use only, to be able to store the
+     * originally requested options.
+     * @returns {Promise.<{Array.<JitsiTrack>}, JitsiConferenceError>} A promise
+     * that returns an array of created JitsiTracks if resolved, or a
+     * JitsiConferenceError if rejected.
      */
-    createLocalTracks(options = {}, firePermissionPromptIsShownEvent) {
+    createLocalTracks(
+            options = {}, firePermissionPromptIsShownEvent, originalOptions) {
         let promiseFulfilled = false;
 
         if (firePermissionPromptIsShownEvent === true) {
@@ -257,7 +311,7 @@ export default {
                 if (!promiseFulfilled) {
                     JitsiMediaDevices.emitEvent(
                         JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN,
-                        RTCBrowserType.getBrowserName());
+                        browser.getName());
                 }
             }, USER_MEDIA_PERMISSION_PROMPT_TIMEOUT);
         }
@@ -275,8 +329,10 @@ export default {
                 window.connectionTimes['obtainPermissions.end']
                     = window.performance.now();
 
-                Statistics.analytics.sendEvent(addDeviceTypeToAnalyticsEvent(
-                    'getUserMedia.success', options), { value: options });
+                Statistics.sendAnalytics(
+                    createGetUserMediaEvent(
+                        'success',
+                        getAnalyticsAttributesFromOptions(options)));
 
                 if (!RTC.options.disableAudioLevels) {
                     for (let i = 0; i < tracks.length; i++) {
@@ -313,7 +369,8 @@ export default {
             .catch(error => {
                 promiseFulfilled = true;
 
-                if (error.name === JitsiTrackErrors.UNSUPPORTED_RESOLUTION) {
+                if (error.name === JitsiTrackErrors.UNSUPPORTED_RESOLUTION
+                    && !browser.usesNewGumFlow()) {
                     const oldResolution = options.resolution || '720';
                     const newResolution = getLowerResolution(oldResolution);
 
@@ -324,15 +381,35 @@ export default {
                             'Retry createLocalTracks with resolution',
                             newResolution);
 
-                        Statistics.analytics.sendEvent(
-                            `getUserMedia.fail.resolution.${oldResolution}`);
+                        Statistics.sendAnalytics(createGetUserMediaEvent(
+                            'warning',
+                            {
+                                'old_resolution': oldResolution,
+                                'new_resolution': newResolution,
+                                reason: 'unsupported resolution'
+                            }));
 
-                        return this.createLocalTracks(options);
+                        return this.createLocalTracks(
+                            options,
+                            undefined,
+                            originalOptions || Object.assign({}, options));
+                    }
+
+                    // We tried everything. If there is a mandatory device id,
+                    // remove it and let gum find a device to use.
+                    if (originalOptions
+                        && error.gum.constraints
+                        && error.gum.constraints.video
+                        && error.gum.constraints.video.mandatory
+                        && error.gum.constraints.video.mandatory.sourceId) {
+                        originalOptions.cameraDeviceId = undefined;
+
+                        return this.createLocalTracks(originalOptions);
                     }
                 }
 
-                if (JitsiTrackErrors.CHROME_EXTENSION_USER_CANCELED
-                        === error.name) {
+                if (error.name
+                        === JitsiTrackErrors.CHROME_EXTENSION_USER_CANCELED) {
                     // User cancelled action is not really an error, so only
                     // log it as an event to avoid having conference classified
                     // as partially failed
@@ -342,9 +419,14 @@ export default {
                     };
 
                     Statistics.sendLog(JSON.stringify(logObject));
-                    Statistics.analytics.sendEvent(
-                        'getUserMedia.userCancel.extensionInstall');
-                } else if (JitsiTrackErrors.NOT_FOUND === error.name) {
+
+                    Statistics.sendAnalytics(
+                        createGetUserMediaEvent(
+                            'warning',
+                            {
+                                reason: 'extension install user canceled'
+                            }));
+                } else if (error.name === JitsiTrackErrors.NOT_FOUND) {
                     // logs not found devices with just application log to cs
                     const logObject = {
                         id: 'usermedia_missing_device',
@@ -352,20 +434,24 @@ export default {
                     };
 
                     Statistics.sendLog(JSON.stringify(logObject));
-                    Statistics.analytics.sendEvent(
-                        `getUserMedia.deviceNotFound.${
-                            error.gum.devices.join('.')}`);
+
+                    const attributes
+                        = getAnalyticsAttributesFromOptions(options);
+
+                    attributes.reason = 'device not found';
+                    attributes.devices = error.gum.devices.join('.');
+                    Statistics.sendAnalytics(
+                        createGetUserMediaEvent('error', attributes));
                 } else {
                     // Report gUM failed to the stats
                     Statistics.sendGetUserMediaFailed(error);
-                    const event
-                        = addDeviceTypeToAnalyticsEvent(
-                            'getUserMedia.failed',
-                            options);
 
-                    Statistics.analytics.sendEvent(
-                        `${event}.${error.name}`,
-                        { value: options });
+                    const attributes
+                        = getAnalyticsAttributesFromOptions(options);
+
+                    attributes.reason = error.name;
+                    Statistics.sendAnalytics(
+                        createGetUserMediaEvent('error', attributes));
                 }
 
                 window.connectionTimes['obtainPermissions.end']
@@ -376,7 +462,8 @@ export default {
     },
 
     /**
-     * Checks if its possible to enumerate available cameras/micropones.
+     * Checks if its possible to enumerate available cameras/microphones.
+     *
      * @returns {Promise<boolean>} a Promise which will be resolved only once
      * the WebRTC stack is ready, either with true if the device listing is
      * available available or with false otherwise.
@@ -392,9 +479,10 @@ export default {
     /**
      * Returns true if changing the input (camera / microphone) or output
      * (audio) device is supported and false if not.
-     * @params {string} [deviceType] - type of device to change. Default is
-     *      undefined or 'input', 'output' - for audio output device change.
-     * @returns {boolean} true if available, false otherwise.
+     *
+     * @param {string} [deviceType] - type of device to change. Default is
+     * {@code undefined} or 'input', 'output' - for audio output device change.
+     * @returns {boolean} {@code true} if available; {@code false}, otherwise.
      * @deprecated use JitsiMeetJS.mediaDevices.isDeviceChangeAvailable instead
      */
     isDeviceChangeAvailable(deviceType) {
@@ -427,6 +515,7 @@ export default {
 
     /**
      * Executes callback with list of media devices connected.
+     *
      * @param {function} callback
      * @deprecated use JitsiMeetJS.mediaDevices.enumerateDevices instead
      */
@@ -457,20 +546,12 @@ export default {
     /* eslint-enable max-params */
 
     /**
-     * Returns current machine id saved from the local storage.
-     * @returns {string} the machine id
-     */
-    getMachineId() {
-        return Settings.machineId;
-    },
-
-    /**
      * Represents a hub/namespace for utility functionality which may be of
      * interest to lib-jitsi-meet clients.
      */
     util: {
         AuthUtil,
-        RTCUIHelper,
-        ScriptUtil
+        ScriptUtil,
+        browser
     }
-};
+});

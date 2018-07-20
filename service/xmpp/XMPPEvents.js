@@ -97,6 +97,13 @@ const XMPPEvents = {
     // received.
     MESSAGE_RECEIVED: 'xmpp.message_received',
 
+    // Designates an event indicating that a private XMPP message in the MUC was
+    // received.
+    PRIVATE_MESSAGE_RECEIVED: 'xmpp.private_message_received',
+
+    // Designates an event indicating that a bot participant type had changed
+    MUC_MEMBER_BOT_TYPE_CHANGED: 'xmpp.muc_member_bot_type_changed',
+
     // Designates an event indicating that the XMPP MUC was destroyed.
     MUC_DESTROYED: 'xmpp.muc_destroyed',
 
@@ -144,6 +151,7 @@ const XMPPEvents = {
      * Indicates that phone number changed.
      */
     PHONE_NUMBER_CHANGED: 'conference.phoneNumberChanged',
+    PRESENCE_RECEIVED: 'xmpp.presence_received',
     PRESENCE_STATUS: 'xmpp.presence_status',
     PROMPT_FOR_LOGIN: 'xmpp.prompt_for_login',
 
@@ -170,6 +178,10 @@ const XMPPEvents = {
 
     // Designates an event indicating that we sent an XMPP message to the MUC.
     SENDING_CHAT_MESSAGE: 'xmpp.sending_chat_message',
+
+    // Designates an event indicating that we sent a private XMPP message to
+    // a specific user of the muc.
+    SENDING_PRIVATE_CHAT_MESSAGE: 'xmpp.sending_private_chat_message',
 
     /**
      * Event fired when we do not get our 'session-accept' acknowledged by
@@ -215,6 +227,17 @@ const XMPPEvents = {
      * STATUS_BUSY, STATUS_AVAILABLE or STATUS_UNDEFINED.
      */
     VIDEO_SIP_GW_AVAILABILITY_CHANGED: 'xmpp.videoSIPGWAvailabilityChanged',
+
+    /**
+     * Indicates that video SIP GW Session state changed.
+     * The statuses are any of the following statuses:
+     * STATE_ON, STATE_OFF, STATE_PENDING, STATE_RETRYING, STATE_FAILED.
+     * {@see VideoSIPGWConstants}
+     *
+     * @param {options} event - {address, oldState, newState, displayName}.
+     */
+    VIDEO_SIP_GW_SESSION_STATE_CHANGED:
+        'xmpp.videoSIPGWSessionStateChanged',
 
     // Designates an event indicating that the local ICE connection state has
     // changed.

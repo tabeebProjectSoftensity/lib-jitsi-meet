@@ -9,7 +9,7 @@ Installation
 To embed Jitsi Meet API in your application you need to add Jitsi Meet API library
 
 ```javascript
-<script src="https://meet.jit.si/lib-jitsi-meet.js"></script>
+<script src="https://meet.jit.si/libs/lib-jitsi-meet.js"></script>
 ```
 
 Now you can access Jitsi Meet API trough the ```JitsiMeetJS``` global object.
@@ -39,15 +39,11 @@ You can access the following methods and objects trough ```JitsiMeetJS``` object
 *  ```JitsiMeetJS.init(options)``` - this method initialized Jitsi Meet API.
 The ```options``` parameter is JS object with the following properties:
     - `useIPv6` - boolean property
-    - `disableDesktopSharing` - Boolean. When set to true disables desktop sharing on all browsers. 
     - `desktopSharingChromeExtId` - The ID of the jidesha extension for Chrome. Example: 'mbocklcggfhnbahlnepmldehdhpjfcjp'
     - `desktopSharingChromeDisabled` - Boolean. Whether desktop sharing should be disabled on Chrome. Example: false.
     - `desktopSharingChromeSources` - Array of strings with the media sources to use when using screen sharing with the Chrome extension. Example: ['screen', 'window']
     - `desktopSharingChromeMinExtVersion` - Required version of Chrome extension. Example: '0.1'
-    - `desktopSharingFirefoxExtId` - The ID of the jidesha extension for Firefox. If null, we assume that no extension is required.
     - `desktopSharingFirefoxDisabled` - Boolean. Whether desktop sharing should be disabled on Firefox. Example: false.
-    - `desktopSharingFirefoxMaxVersionExtRequired` - The maximum version of Firefox which requires a jidesha extension. Example: if set to 41, we will require the extension for Firefox versions up to and including 41. On Firefox 42 and higher, we will run without the extension. If set to -1, an extension will be required for all versions of Firefox.
-    - `desktopSharingFirefoxExtensionURL` - The URL to the Firefox extension for desktop sharing. "null" if no extension is required.
     - `disableAudioLevels` - boolean property. Enables/disables audio levels.
     - `disableSimulcast` - boolean property. Enables/disables simulcast.
     - `enableWindowOnErrorHandler` - boolean property (default false). Enables/disables attaching global onerror handler (window.onerror).
@@ -78,7 +74,6 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
     - firePermissionPromptIsShownEvent - optional boolean parameter. If set to ```true```, ```JitsiMediaDevicesEvents.PERMISSION_PROMPT_IS_SHOWN``` will be fired when browser shows gUM permission prompt.
 
 * ```JitsiMeetJS.enumerateDevices(callback)``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.enumerateDevices(callback)``` instead.
-* ```JitsiMeetJS.isDeviceListAvailable()``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.isDeviceListAvailable()``` instead.
 * ```JitsiMeetJS.isDeviceChangeAvailable(deviceType)``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.isDeviceChangeAvailable(deviceType)``` instead.
 * ```JitsiMeetJS.isDesktopSharingEnabled()``` - returns true if desktop sharing is supported and false otherwise. NOTE: that method can be used after ```JitsiMeetJS.init(options)``` is completed otherwise the result will be always null.
 * ```JitsiMeetJS.getGlobalOnErrorHandler()``` - returns function that can be used to be attached to window.onerror and if options.enableWindowOnErrorHandler is enabled returns the function used by the lib. (function(message, source, lineno, colno, error)).
@@ -142,7 +137,7 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
 
     4. mediaDevices
         - DEVICE_LIST_CHANGED - indicates that list of currently connected devices has changed (parameters - devices(MediaDeviceInfo[])).
-        - PERMISSION_PROMPT_IS_SHOWN - Indicates that the environment is currently showing permission prompt to access camera and/or microphone (parameters - environmentType ('chrome'|'opera'|'firefox'|'iexplorer'|'safari'|'nwjs'|'react-native'|'android').
+        - PERMISSION_PROMPT_IS_SHOWN - Indicates that the environment is currently showing permission prompt to access camera and/or microphone (parameters - environmentType ('chrome'|'opera'|'firefox'|'safari'|'nwjs'|'react-native'|'android').
 
 
 * ```JitsiMeetJS.errors``` - JS object that contains all errors used by the API. You can use that object to check the reported errors from the API
@@ -165,8 +160,9 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
         - FOCUS_DISCONNECTED - focus left the conference
         - CONFERENCE_MAX_USERS - The maximum users limit has been reached
     2. connection
+        - CONNECTION_DROPPED_ERROR - indicates that the connection was dropped with an error which was most likely caused by some networking issues.
         - PASSWORD_REQUIRED - passed when the connection to the server failed. You should try to authenticate with password.
-        - CONNECTION_ERROR - indicates connection failures.
+        - SERVER_ERROR - indicates too many 5XX errors were received from the server.
         - OTHER_ERROR - all other errors
     3. track
         - GENERAL - generic getUserMedia-related error.
@@ -200,7 +196,7 @@ This objects represents the server connection. You can create new ```JitsiConnec
 1. ```JitsiConnection(appID, token, options)``` - constructor. Creates the conference object.
 
     - appID - identification for the provider of Jitsi Meet video conferencing services. **NOTE: not implemented yet. You can safely pass ```null```**
-    - token - secret generated by the provider of Jitsi Meet video conferencing services. The token will be send to the provider from the Jitsi Meet server deployment for authorization of the current client. **NOTE: not implemented yet. You can safely pass ```null```**
+    - token - secret generated by the provider of Jitsi Meet video conferencing services. The token will be send to the provider from the Jitsi Meet server deployment for authorization of the current client.
     - options - JS object with configuration options for the server connection. You can change the following properties there:
         1. bosh -
         2. hosts - JS Object
