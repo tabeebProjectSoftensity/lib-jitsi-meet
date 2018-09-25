@@ -657,7 +657,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
             // In most cases we are showing a webcam. So if we've gotten here,
             // it should be relatively safe to assume that we are probably
             // showing the user-facing camera.
-            return CameraFacingMode.USER;
+            return CameraFacingMode.ENVIRONMENT;
         }
 
         return undefined;

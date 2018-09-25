@@ -219,7 +219,7 @@ function getConstraints(um, options = {}) {
             // TODO: Maybe use "exact" syntax if options.facingMode is defined,
             // but this probably needs to be decided when updating other
             // constraints, as we currently don't use "exact" syntax anywhere.
-            const facingMode = options.facingMode || CameraFacingMode.USER;
+            const facingMode = options.facingMode || CameraFacingMode.ENVIRONMENT;
 
             if (isNewStyleConstraintsSupported) {
                 constraints.video.facingMode = facingMode;
@@ -388,7 +388,7 @@ function newGetConstraints(um = [], options = {}) {
         if (options.cameraDeviceId) {
             constraints.video.deviceId = options.cameraDeviceId;
         } else {
-            const facingMode = options.facingMode || CameraFacingMode.USER;
+            const facingMode = options.facingMode || CameraFacingMode.ENVIRONMENT;
 
             constraints.video.facingMode = facingMode;
         }
