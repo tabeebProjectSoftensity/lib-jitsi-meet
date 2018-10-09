@@ -1,67 +1,19 @@
 {
   "name": "lib-jitsi-meet",
-  "version": "0.0.0",
-  "description": "JS library for accessing Jitsi server side deployments",
+  "version": "1.0.0",
+  "description": "release",
+  "main": "lib-jitsi-meet.min.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "repository": {
     "type": "git",
-    "url": "git://github.com/jitsi/lib-jitsi-meet"
+    "url": "git+https://github.com/tabeebProjectSoftensity/lib-jitsi-meet.git"
   },
-  "keywords": [
-    "jingle",
-    "webrtc",
-    "xmpp",
-    "browser",
-    "jitsi"
-  ],
   "author": "",
-  "readmeFilename": "README.md",
-  "dependencies": {
-    "@jitsi/sdp-interop": "0.1.13",
-    "@jitsi/sdp-simulcast": "0.2.1",
-    "async": "0.9.0",
-    "current-executing-script": "0.1.3",
-    "jitsi-meet-logger": "github:jitsi/jitsi-meet-logger#6fff754a77a56ab52499f3559105a15886942a1e",
-    "js-utils": "github:jitsi/js-utils#d4b78721b754a15c2588b7b0c621a9fff6fa1363",
-    "react-native-callstats": "3.52.0",
-    "sdp-transform": "2.3.0",
-    "strophe.js": "1.2.15",
-    "strophejs-plugin-disco": "0.0.2",
-    "webrtc-adapter": "github:webrtc/adapter#1eec19782b4058d186341263e7d049cea3e3290a",
-    "yaeti": "1.0.1"
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tabeebProjectSoftensity/lib-jitsi-meet/issues"
   },
-  "devDependencies": {
-    "babel-core": "6.26.0",
-    "babel-eslint": "8.0.3",
-    "babel-loader": "7.1.2",
-    "babel-preset-env": "1.6.1",
-    "babel-preset-stage-1": "6.24.1",
-    "core-js": "2.5.1",
-    "eslint": "4.12.1",
-    "eslint-config-jitsi": "github:jitsi/eslint-config-jitsi#v0.1",
-    "eslint-plugin-flowtype": "2.39.1",
-    "eslint-plugin-import": "2.8.0",
-    "flow-bin": "0.67.1",
-    "jasmine-core": "2.5.2",
-    "karma": "0.13.22",
-    "karma-chrome-launcher": "2.2.0",
-    "karma-jasmine": "0.3.8",
-    "karma-webpack": "1.8.1",
-    "precommit-hook": "3.0.0",
-    "string-replace-loader": "1.3.0",
-    "uglifyjs-webpack-plugin": "1.2.2",
-    "webpack": "3.9.1"
-  },
-  "scripts": {
-    "lint": "eslint . && flow",
-    "postinstall": "webpack -p",
-    "test": "karma start karma.conf.js",
-    "test-watch": "karma start karma.conf.js --no-single-run",
-    "validate": "npm ls"
-  },
-  "pre-commit": [
-    "lint",
-    "test"
-  ],
-  "main": "./index.js",
-  "license": "Apache-2.0"
+  "homepage": "https://github.com/tabeebProjectSoftensity/lib-jitsi-meet#readme"
 }
