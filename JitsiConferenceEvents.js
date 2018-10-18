@@ -8,11 +8,6 @@
 export const AUTH_STATUS_CHANGED = 'conference.auth_status_changed';
 
 /**
- * Indicates that available devices changed.
- */
-export const AVAILABLE_DEVICES_CHANGED = 'conference.availableDevicesChanged';
-
-/**
  * A participant avatar has changed.
  */
 export const AVATAR_CHANGED = 'conference.avatarChanged';
@@ -128,6 +123,13 @@ export const LAST_N_ENDPOINTS_CHANGED = 'conference.lastNEndpointsChanged';
 export const LOCK_STATE_CHANGED = 'conference.lock_state_changed';
 
 /**
+ * Indicates that the region of the media server (jitsi-videobridge) that we
+ * are connected to changed (or was initially set).
+ * @type {string} the region.
+ */
+export const SERVER_REGION_CHANGED = 'conference.server_region_changed';
+
+/**
  * New text message was received.
  */
 export const MESSAGE_RECEIVED = 'conference.messageReceived';
@@ -178,6 +180,12 @@ export const P2P_STATUS = 'conference.p2pStatus';
  * Indicates that phone number changed.
  */
 export const PHONE_NUMBER_CHANGED = 'conference.phoneNumberChanged';
+
+/**
+ * The conference properties changed.
+ * @type {string}
+ */
+export const PROPERTIES_CHANGED = 'conference.propertiesChanged';
 
 /**
  * Indicates that recording state changed.

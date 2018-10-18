@@ -1,9 +1,46 @@
 /* global __filename, $, Promise */
 import { Strophe } from 'strophe.js';
 
+import EventEmitter from 'events';
+import { getLogger } from 'jitsi-meet-logger';
+import isEqual from 'lodash.isequal';
+
+import * as JitsiConferenceErrors from './JitsiConferenceErrors';
+import JitsiConferenceEventManager from './JitsiConferenceEventManager';
+import * as JitsiConferenceEvents from './JitsiConferenceEvents';
+import JitsiParticipant from './JitsiParticipant';
+import JitsiTrackError from './JitsiTrackError';
+import * as JitsiTrackErrors from './JitsiTrackErrors';
+import * as JitsiTrackEvents from './JitsiTrackEvents';
+import authenticateAndUpgradeRole from './authenticateAndUpgradeRole';
+import JitsiDTMFManager from './modules/DTMF/JitsiDTMFManager';
+import P2PDominantSpeakerDetection from './modules/P2PDominantSpeakerDetection';
+import RTC from './modules/RTC/RTC';
+import TalkMutedDetection from './modules/TalkMutedDetection';
+import browser from './modules/browser';
+import ConnectionQuality from './modules/connectivity/ConnectionQuality';
+import ParticipantConnectionStatusHandler
+    from './modules/connectivity/ParticipantConnectionStatus';
+import E2ePing from './modules/e2eping/e2eping';
+import Jvb121EventGenerator from './modules/event/Jvb121EventGenerator';
+import RecordingManager from './modules/recording/RecordingManager';
+import RttMonitor from './modules/rttmonitor/rttmonitor';
+import AvgRTPStatsReporter from './modules/statistics/AvgRTPStatsReporter';
+import SpeakerStatsCollector from './modules/statistics/SpeakerStatsCollector';
+import Statistics from './modules/statistics/statistics';
+import Transcriber from './modules/transcription/transcriber';
+import GlobalOnErrorHandler from './modules/util/GlobalOnErrorHandler';
+import ComponentsVersions from './modules/version/ComponentsVersions';
+import VideoSIPGW from './modules/videosipgw/VideoSIPGW';
+import * as VideoSIPGWConstants from './modules/videosipgw/VideoSIPGWConstants';
+import { JITSI_MEET_MUC_TYPE } from './modules/xmpp/ChatRoom';
+import * as MediaType from './service/RTC/MediaType';
+import * as RTCEvents from './service/RTC/RTCEvents';
+import VideoType from './service/RTC/VideoType';
 import {
     ACTION_JINGLE_RESTART,
     ACTION_JINGLE_SI_RECEIVED,
+    ACTION_JINGLE_SI_TIMEOUT,
     ACTION_JINGLE_TERMINATE,
     ACTION_P2P_ESTABLISHED,
     ACTION_P2P_FAILED,
@@ -12,43 +49,16 @@ import {
     createJingleEvent,
     createP2PEvent
 } from './service/statistics/AnalyticsEvents';
-import AvgRTPStatsReporter from './modules/statistics/AvgRTPStatsReporter';
-import ComponentsVersions from './modules/version/ComponentsVersions';
-import ConnectionQuality from './modules/connectivity/ConnectionQuality';
-import E2ePing from './modules/e2eping/e2eping';
-import { getLogger } from 'jitsi-meet-logger';
-import GlobalOnErrorHandler from './modules/util/GlobalOnErrorHandler';
-import EventEmitter from 'events';
-import authenticateAndUpgradeRole from './authenticateAndUpgradeRole';
-import * as JitsiConferenceErrors from './JitsiConferenceErrors';
-import JitsiConferenceEventManager from './JitsiConferenceEventManager';
-import * as JitsiConferenceEvents from './JitsiConferenceEvents';
-import JitsiDTMFManager from './modules/DTMF/JitsiDTMFManager';
-import JitsiParticipant from './JitsiParticipant';
-import JitsiTrackError from './JitsiTrackError';
-import * as JitsiTrackErrors from './JitsiTrackErrors';
-import * as JitsiTrackEvents from './JitsiTrackEvents';
-import Jvb121EventGenerator from './modules/event/Jvb121EventGenerator';
-import * as MediaType from './service/RTC/MediaType';
-import ParticipantConnectionStatusHandler
-    from './modules/connectivity/ParticipantConnectionStatus';
-import P2PDominantSpeakerDetection from './modules/P2PDominantSpeakerDetection';
-import RTC from './modules/RTC/RTC';
-import browser from './modules/browser';
-import * as RTCEvents from './service/RTC/RTCEvents';
-import Statistics from './modules/statistics/statistics';
-import TalkMutedDetection from './modules/TalkMutedDetection';
-import Transcriber from './modules/transcription/transcriber';
-import VideoType from './service/RTC/VideoType';
-import RecordingManager from './modules/recording/RecordingManager';
-import VideoSIPGW from './modules/videosipgw/VideoSIPGW';
-import * as VideoSIPGWConstants from './modules/videosipgw/VideoSIPGWConstants';
 import * as XMPPEvents from './service/xmpp/XMPPEvents';
-import { JITSI_MEET_MUC_TYPE } from './modules/xmpp/ChatRoom';
-
-import SpeakerStatsCollector from './modules/statistics/SpeakerStatsCollector';
 
 const logger = getLogger(__filename);
+
+/**
+ * How long since Jicofo is supposed to send a session-initiate, before
+ * {@link ACTION_JINGLE_SI_TIMEOUT} analytics event is sent (in ms).
+ * @type {number}
+ */
+const JINGLE_SI_TIMEOUT = 5000;
 
 /**
  * Creates a JitsiConference object with the given name and properties.
@@ -121,10 +131,6 @@ export default function JitsiConference(options) {
         audio: false,
         video: false
     };
-    this.availableDevices = {
-        audio: undefined,
-        video: undefined
-    };
     this.isMutedByFocus = false;
 
     // Flag indicates if the 'onCallEnded' method was ever called on this
@@ -132,6 +138,9 @@ export default function JitsiConference(options) {
     // We need to know if the potential issue happened before or after
     // the restart.
     this.wasStopped = false;
+
+    // Conference properties, maintained by jicofo.
+    this.properties = {};
 
     /**
      * The object which monitors local and remote connection statistics (e.g.
@@ -243,10 +252,14 @@ JitsiConference.prototype._init = function(options = {}) {
     this.room.addListener(
         XMPPEvents.CONNECTION_ESTABLISHED, this._onIceConnectionEstablished);
 
-    this.room.updateDeviceAvailability(RTC.getDeviceAvailability());
+    this._updateProperties = this._updateProperties.bind(this);
+    this.room.addListener(XMPPEvents.CONFERENCE_PROPERTIES_CHANGED,
+        this._updateProperties);
+
+    this.rttMonitor = new RttMonitor(config.rttMonitor || {});
 
     this.e2eping = new E2ePing(
-        this.eventEmitter,
+        this,
         config,
         (message, to) => {
             try {
@@ -256,21 +269,6 @@ JitsiConference.prototype._init = function(options = {}) {
                 logger.warn('Failed to send a ping request or response.');
             }
         });
-    this.on(
-        JitsiConferenceEvents.USER_JOINED,
-        (id, participant) => this.e2eping.participantJoined(participant));
-    this.on(
-        JitsiConferenceEvents.USER_LEFT,
-        (id, participant) => this.e2eping.participantLeft(participant));
-    this.on(
-        JitsiConferenceEvents.ENDPOINT_MESSAGE_RECEIVED,
-        (participant, payload) => {
-            this.e2eping.messageReceived(participant, payload);
-        });
-    this.on(
-        JitsiConferenceEvents.DATA_CHANNEL_OPENED,
-        this.e2eping.dataChannelOpened);
-
 
     if (!this.rtc) {
         this.rtc = new RTC(this, options);
@@ -361,7 +359,7 @@ JitsiConference.prototype._init = function(options = {}) {
  */
 JitsiConference.prototype.join = function(password) {
     if (this.room) {
-        this.room.join(password);
+        this.room.join(password).then(() => this._maybeSetSITimeout());
     }
 };
 
@@ -419,6 +417,16 @@ JitsiConference.prototype.leave = function() {
         this.avgRtpStatsReporter = null;
     }
 
+    if (this.rttMonitor) {
+        this.rttMonitor.stop();
+        this.rttMonitor = null;
+    }
+
+    if (this.e2eping) {
+        this.e2eping.stop();
+        this.e2eping = null;
+    }
+
     this.getLocalTracks().forEach(track => this.onLocalTrackRemoved(track));
 
     this.rtc.closeBridgeChannel();
@@ -450,6 +458,10 @@ JitsiConference.prototype.leave = function() {
         room.removeListener(
             XMPPEvents.CONNECTION_ESTABLISHED,
             this._onIceConnectionEstablished);
+
+        room.removeListener(
+            XMPPEvents.CONFERENCE_PROPERTIES_CHANGED,
+            this._updateProperties);
 
         this.room = null;
 
@@ -1217,6 +1229,41 @@ JitsiConference.prototype.kickParticipant = function(id) {
 };
 
 /**
+ * Maybe clears the timeout which emits {@link ACTION_JINGLE_SI_TIMEOUT}
+ * analytics event.
+ * @private
+ */
+JitsiConference.prototype._maybeClearSITimeout = function() {
+    if (this._sessionInitiateTimeout
+            && (this.jvbJingleSession || this.getParticipantCount() < 2)) {
+        window.clearTimeout(this._sessionInitiateTimeout);
+        this._sessionInitiateTimeout = null;
+    }
+};
+
+/**
+ * Sets a timeout which will emit {@link ACTION_JINGLE_SI_TIMEOUT} analytics
+ * event.
+ * @private
+ */
+JitsiConference.prototype._maybeSetSITimeout = function() {
+    // Jicofo is supposed to invite if there are at least 2 participants
+    if (!this.jvbJingleSession
+            && this.getParticipantCount() >= 2
+            && !this._sessionInitiateTimeout) {
+        this._sessionInitiateTimeout = window.setTimeout(() => {
+            this._sessionInitiateTimeout = null;
+            Statistics.sendAnalytics(createJingleEvent(
+                ACTION_JINGLE_SI_TIMEOUT,
+                {
+                    p2p: false,
+                    value: JINGLE_SI_TIMEOUT
+                }));
+        }, JINGLE_SI_TIMEOUT);
+    }
+};
+
+/**
  * Mutes a participant.
  * @param {string} id The id of the participant to mute.
  */
@@ -1271,6 +1318,7 @@ JitsiConference.prototype.onMemberJoined = function(
         error => logger.warn(`Failed to discover features of ${jid}`, error));
 
     this._maybeStartOrStopP2P();
+    this._maybeSetSITimeout();
 };
 
 /* eslint-enable max-params */
@@ -1330,6 +1378,7 @@ JitsiConference.prototype.onMemberLeft = function(jid) {
     }
 
     this._maybeStartOrStopP2P(true /* triggered by user left event */);
+    this._maybeClearSITimeout();
 };
 
 /**
@@ -1580,6 +1629,16 @@ JitsiConference.prototype._acceptJvbIncomingCall = function(
             createJingleEvent(ACTION_JINGLE_RESTART, { p2p: false }));
     }
 
+    const serverRegion
+        = $(jingleOffer)
+            .find('>server-region[xmlns="http://jitsi.org/protocol/focus"]')
+            .attr('region');
+
+    this.eventEmitter.emit(
+        JitsiConferenceEvents.SERVER_REGION_CHANGED,
+        serverRegion);
+
+    this._maybeClearSITimeout();
     Statistics.sendAnalytics(createJingleEvent(
         ACTION_JINGLE_SI_RECEIVED,
         {
@@ -2484,6 +2543,55 @@ JitsiConference.prototype._onIceConnectionEstablished = function(
                 initiator: this.p2pJingleSession.isInitiator
             }));
 
+};
+
+/**
+ * Called when the chat room reads a new list of properties from jicofo's
+ * presence. The properties may have changed, but they don't have to.
+ *
+ * @param {Object} properties - The properties keyed by the property name
+ * ('key').
+ * @private
+ */
+JitsiConference.prototype._updateProperties = function(properties = {}) {
+    const changed = !isEqual(properties, this.properties);
+
+    this.properties = properties;
+    if (changed) {
+        this.eventEmitter.emit(
+            JitsiConferenceEvents.PROPERTIES_CHANGED,
+            this.properties);
+
+        // Some of the properties need to be added to analytics events.
+        const analyticsKeys = [
+
+            // The number of jitsi-videobridge instances currently used for the
+            // conference.
+            'bridge-count',
+
+            // The conference creation time (set by jicofo).
+            'created-ms',
+            'octo-enabled'
+        ];
+
+        analyticsKeys.forEach(key => {
+            if (properties[key] !== undefined) {
+                Statistics.analytics.addPermanentProperties({
+                    [key.replace('-', '_')]: properties[key]
+                });
+            }
+        });
+    }
+};
+
+/**
+ * Gets a conference property with a given key.
+ *
+ * @param {string} key - The key.
+ * @returns {*} The value
+ */
+JitsiConference.prototype.getProperty = function(key) {
+    return this.properties[key];
 };
 
 /**

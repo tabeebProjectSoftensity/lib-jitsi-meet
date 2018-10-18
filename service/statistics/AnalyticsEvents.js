@@ -68,6 +68,14 @@ export const ACTION_JINGLE_SA_TIMEOUT = 'session-accept.timeout';
 export const ACTION_JINGLE_SI_RECEIVED = 'session-initiate.received';
 
 /**
+ * The "action" value for Jingle events which indicates that a session-initiate
+ * not arrived within a timeout (the value is specified in
+ * the {@link JingleSessionPC}.
+ * @type {string}
+ */
+export const ACTION_JINGLE_SI_TIMEOUT = 'session-initiate.timeout';
+
+/**
  * A constant for the "terminate" action for Jingle events. TODO: verify/fix
  * the documentation)
  * @type {string}
@@ -415,6 +423,21 @@ export const createRtpStatsEvent = function(attributes) {
     return {
         type: TYPE_OPERATIONAL,
         action: 'rtp.stats',
+        attributes
+    };
+};
+
+/**
+ * Creates an event which contains the round trip time (RTT) to a set of
+ * regions.
+ *
+ * @param attributes
+ * @returns {{type: string, action: string, attributes: *}}
+ */
+export const createRttByRegionEvent = function(attributes) {
+    return {
+        type: TYPE_OPERATIONAL,
+        action: 'rtt.by.region',
         attributes
     };
 };

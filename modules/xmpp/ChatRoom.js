@@ -11,7 +11,6 @@ import * as MediaType from '../../service/RTC/MediaType';
 import XMPPEvents from '../../service/xmpp/XMPPEvents';
 
 import Moderator from './moderator';
-import Statistics from '../statistics/statistics';
 
 const logger = getLogger(__filename);
 
@@ -183,11 +182,6 @@ export default class ChatRoom extends Listenable {
         this.presMap.to = this.myroomjid;
         this.presMap.xns = 'http://jabber.org/protocol/muc';
         this.presMap.nodes = [];
-        this.presMap.nodes.push({
-            'tagName': 'user-agent',
-            'value': navigator.userAgent,
-            'attributes': { xmlns: 'http://jitsi.org/jitmeet/user-agent' }
-        });
 
         if (options.enableStatsID) {
             this.presMap.nodes.push({
@@ -213,32 +207,20 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     *
-     * @param devices
-     */
-    updateDeviceAvailability(devices) {
-        this.presMap.nodes.push({
-            'tagName': 'devices',
-            'children': [
-                {
-                    'tagName': 'audio',
-                    'value': devices.audio
-                },
-                {
-                    'tagName': 'video',
-                    'value': devices.video
-                }
-            ]
-        });
-    }
-
-    /**
-     *
+     * Joins the chat room.
      * @param password
+     * @returns {Promise} - resolved when join completes. At the time of this
+     * writing it's never rejected.
      */
     join(password) {
         this.password = password;
-        this.moderator.allocateConferenceFocus(() => this.sendPresence(true));
+
+        return new Promise(resolve => {
+            this.moderator.allocateConferenceFocus(() => {
+                this.sendPresence(true);
+                resolve();
+            });
+        });
     }
 
     /**
@@ -617,32 +599,18 @@ export default class ChatRoom extends Listenable {
                 break;
             case 'conference-properties':
                 if (member.isFocus) {
+                    const properties = {};
+
                     for (let j = 0; j < node.children.length; j++) {
                         const { attributes } = node.children[j];
 
-                        if (!attributes) {
-                            break;
+                        if (attributes && attributes.key) {
+                            properties[attributes.key] = attributes.value;
                         }
-
-                        const { key, value } = attributes;
-
-                        /* eslint-disable no-fallthrough */
-                        switch (key) {
-
-                        // The number of jitsi-videobridge instances currently
-                        // used for the conference.
-                        case 'bridge-count':
-
-                        // The conference creation time (set by jicofo).
-                        case 'created-ms':
-                        case 'octo-enabled':
-                            Statistics.analytics.addPermanentProperties({
-                                [key.replace('-', '_')]: value
-                            });
-                            break;
-                        }
-                        /* eslint-enable no-fallthrough */
                     }
+
+                    this.eventEmitter.emit(
+                        XMPPEvents.CONFERENCE_PROPERTIES_CHANGED, properties);
                 }
                 break;
             case 'transcription-status': {
