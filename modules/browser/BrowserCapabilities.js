@@ -78,13 +78,23 @@ export default class BrowserCapabilities extends BrowserDetection {
     }
 
     /**
+     * Checks if current browser is a Safari and a version of Safari that
+     * supports VP8.
+     *
+     * @returns {boolean}
+     */
+    isSafariWithVP8() {
+        return this.isSafari()
+            && !this.isVersionLessThan('12.1');
+    }
+
+    /**
      * Checks if the current browser is supported.
      *
      * @returns {boolean} true if the browser is supported, false otherwise.
      */
     isSupported() {
         return this.isChromiumBased()
-            || this.isEdge()
             || this.isFirefox()
             || this.isReactNative()
             || this.isSafariWithWebrtc();
@@ -97,7 +107,8 @@ export default class BrowserCapabilities extends BrowserDetection {
      * otherwise.
      */
     supportsVideoMuteOnConnInterrupted() {
-        return this.isChromiumBased() || this.isReactNative();
+        return this.isChromiumBased() || this.isReactNative()
+            || this.isSafariWithVP8();
     }
 
     /**
@@ -161,7 +172,8 @@ export default class BrowserCapabilities extends BrowserDetection {
      * candidates through the legacy getStats() API.
      */
     supportsLocalCandidateRttStatistics() {
-        return this.isChromiumBased() || this.isReactNative();
+        return this.isChromiumBased() || this.isReactNative()
+            || this.isSafariWithVP8();
     }
 
     /**
@@ -187,7 +199,7 @@ export default class BrowserCapabilities extends BrowserDetection {
      * @returns {boolean}
      */
     supportsRtpSender() {
-        return this.isFirefox();
+        return this.isFirefox() || this.isSafariWithVP8();
     }
 
     /**
@@ -196,7 +208,7 @@ export default class BrowserCapabilities extends BrowserDetection {
      * @returns {boolean}
      */
     supportsRtx() {
-        return !this.isFirefox();
+        return !this.isFirefox() && !this.usesUnifiedPlan();
     }
 
     /**
@@ -204,8 +216,8 @@ export default class BrowserCapabilities extends BrowserDetection {
      * @returns {boolean}
      */
     supportsSimulcast() {
-        return this.isChromiumBased()
-            || this.isFirefox() || this.isReactNative();
+        return this.isChromiumBased() || this.isFirefox()
+            || this.isSafariWithVP8() || this.isReactNative();
     }
 
     /**
@@ -218,9 +230,11 @@ export default class BrowserCapabilities extends BrowserDetection {
         // FIXME: Check if we can use supportsVideoOut and supportsVideoIn. I
         // leave the old implementation here in order not to brake something.
 
-        // Currently Safari using webrtc/adapter does not support video due in
-        // part to Safari only supporting H264 and the bridge sending VP8.
-        return !this.isSafariWithWebrtc();
+        // Older versions of Safari using webrtc/adapter do not support video
+        // due in part to Safari only supporting H264 and the bridge sending VP8
+        // Newer Safari support VP8 and other WebRTC features.
+        return !this.isSafariWithWebrtc()
+            || (this.isSafariWithVP8() && this.usesPlanB());
     }
 
     /**
@@ -238,7 +252,19 @@ export default class BrowserCapabilities extends BrowserDetection {
      * @returns {boolean}
      */
     usesUnifiedPlan() {
-        return this.isFirefox();
+        if (this.isFirefox()) {
+            return true;
+        }
+
+        if (this.isSafariWithVP8()) {
+            // eslint-disable-next-line max-len
+            // https://trac.webkit.org/changeset/236144/webkit/trunk/LayoutTests/webrtc/video-addLegacyTransceiver.html
+            // eslint-disable-next-line no-undef
+            return Object.keys(RTCRtpTransceiver.prototype)
+                   .indexOf('currentDirection') > -1;
+        }
+
+        return false;
     }
 
     /**
@@ -261,27 +287,7 @@ export default class BrowserCapabilities extends BrowserDetection {
         }
 
         if (this.isChromiumBased()) {
-            // NW.JS doesn't expose the Chrome version in the UA string.
-            if (this.isNWJS()) {
-                // eslint-disable-next-line no-undef
-                const version = Number.parseInt(process.versions.chromium, 10);
-
-                return version >= REQUIRED_CHROME_VERSION;
-            }
-
-            // Here we process all browsers which use the Chrome engine but
-            // don't necessarily identify as Chrome. We cannot use the version
-            // comparing functions because the Electron, Opera and NW.JS
-            // versions are inconsequential here, as we need to know the actual
-            // Chrome engine version.
-            const ua = navigator.userAgent;
-
-            if (ua.match(/Chrome/)) {
-                const version
-                    = Number.parseInt(ua.match(/Chrome\/([\d.]+)/)[1], 10);
-
-                return version >= REQUIRED_CHROME_VERSION;
-            }
+            return this._getChromiumBasedVersion() >= REQUIRED_CHROME_VERSION;
         }
 
         return false;
@@ -298,10 +304,54 @@ export default class BrowserCapabilities extends BrowserDetection {
     }
 
     /**
-     * Checks if the browser supposrts getDisplayMedia.
-     * @returns {boolean} {@code true} if the browser supposrts getDisplayMedia.
+     * Checks if the browser supports getDisplayMedia.
+     * @returns {boolean} {@code true} if the browser supports getDisplayMedia.
      */
     supportsGetDisplayMedia() {
-        return navigator.getDisplayMedia !== undefined;
+        return typeof navigator.getDisplayMedia !== 'undefined'
+            || (typeof navigator.mediaDevices !== 'undefined'
+                && typeof navigator.mediaDevices.getDisplayMedia
+                    !== 'undefined');
+    }
+
+    /**
+     * Checks if the browser supports the "sdpSemantics" configuration option.
+     * https://webrtc.org/web-apis/chrome/unified-plan/
+     *
+     * @returns {boolean}
+     */
+    supportsSdpSemantics() {
+        return this.isChromiumBased() && this._getChromiumBasedVersion() >= 65;
+    }
+
+    /**
+     * Returns the version of a Chromium based browser.
+     *
+     * @returns {Number}
+     */
+    _getChromiumBasedVersion() {
+        if (this.isChromiumBased()) {
+            // NW.JS doesn't expose the Chrome version in the UA string.
+            if (this.isNWJS()) {
+                // eslint-disable-next-line no-undef
+                return Number.parseInt(process.versions.chromium, 10);
+            }
+
+            // Here we process all browsers which use the Chrome engine but
+            // don't necessarily identify as Chrome. We cannot use the version
+            // comparing functions because the Electron, Opera and NW.JS
+            // versions are inconsequential here, as we need to know the actual
+            // Chrome engine version.
+            const ua = navigator.userAgent;
+
+            if (ua.match(/Chrome/)) {
+                const version
+                    = Number.parseInt(ua.match(/Chrome\/([\d.]+)/)[1], 10);
+
+                return version;
+            }
+        }
+
+        return -1;
     }
 }

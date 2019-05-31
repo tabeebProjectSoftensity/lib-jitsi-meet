@@ -1,7 +1,7 @@
 /* global $ */
 
 import { getLogger } from 'jitsi-meet-logger';
-import { Strophe } from 'strophe.js';
+import { $msg, Strophe } from 'strophe.js';
 import 'strophejs-plugin-disco';
 
 import RandomUtil from '../util/RandomUtil';
@@ -16,6 +16,8 @@ import initRayo from './strophe.rayo';
 import initStropheLogger from './strophe.logger';
 import Listenable from '../util/Listenable';
 import Caps from './Caps';
+import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
+import XMPPEvents from '../../service/xmpp/XMPPEvents';
 
 const logger = getLogger(__filename);
 
@@ -38,6 +40,24 @@ function createConnection(token, bosh = '/http-bind') {
 
     return conn;
 }
+
+// FIXME: remove once we have a default config template. -saghul
+/**
+ * A list of ice servers to use by default for P2P.
+ */
+export const DEFAULT_STUN_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
+];
+
+/**
+ * The name of the field used to recognize a chat message as carrying a JSON
+ * payload from another endpoint.
+ * If the json-message of a chat message contains a valid JSON object, and
+ * the JSON has this key, then it is a valid json-message to be sent.
+ */
+export const JITSI_MEET_MUC_TYPE = 'type';
 
 /**
  *
@@ -117,6 +137,15 @@ export default class XMPP extends Listenable {
     }
 
     /**
+     * Returns {@code true} if the PING functionality is supported by the server
+     * or {@code false} otherwise.
+     * @returns {boolean}
+     */
+    isPingSupported() {
+        return this._pingSupported !== false;
+    }
+
+    /**
      *
      */
     getConnection() {
@@ -154,21 +183,39 @@ export default class XMPP extends Listenable {
             // Schedule ping ?
             const pingJid = this.connection.domain;
 
-            this.connection.ping.hasPingSupport(
-                pingJid,
-                hasPing => {
-                    if (hasPing) {
+            this.caps.getFeaturesAndIdentities(pingJid)
+                .then(({ features, identities }) => {
+                    if (features.has(Strophe.NS.PING)) {
+                        this._pingSupported = true;
                         this.connection.ping.startInterval(pingJid);
                     } else {
                         logger.warn(`Ping NOT supported by ${pingJid}`);
                     }
+
+                    // check for speakerstats
+                    identities.forEach(identity => {
+                        if (identity.type === 'speakerstats') {
+                            this.speakerStatsComponentAddress = identity.name;
+
+                            this.connection.addHandler(
+                                this._onPrivateMessage.bind(this), null,
+                                'message', null, null);
+                        }
+                    });
+                })
+                .catch(error => {
+                    const errmsg = 'Feature discovery error';
+
+                    GlobalOnErrorHandler.callErrorHandler(
+                        new Error(`${errmsg}: ${error}`));
+                    logger.error(errmsg, error);
                 });
 
             if (credentials.password) {
                 this.authenticatedUser = true;
             }
             if (this.connection && this.connection.connected
-                    && Strophe.getResourceFromJid(this.connection.jid)) {
+                && Strophe.getResourceFromJid(this.connection.jid)) {
                 // .connected is true while connecting?
                 // this.connection.send($pres());
                 this.eventEmitter.emit(
@@ -393,6 +440,24 @@ export default class XMPP extends Listenable {
     }
 
     /**
+     * Pings the server. Remember to check {@link isPingSupported} before using
+     * this method.
+     * @param timeout how many ms before a timeout should occur.
+     * @returns {Promise} resolved on ping success and reject on an error or
+     * a timeout.
+     */
+    ping(timeout) {
+        return new Promise((resolve, reject) => {
+            if (this.isPingSupported()) {
+                this.connection.ping
+                    .ping(this.connection.domain, resolve, reject, timeout);
+            } else {
+                reject('PING operation is not supported by the server');
+            }
+        });
+    }
+
+    /**
      *
      * @param jid
      * @param mute
@@ -474,15 +539,8 @@ export default class XMPP extends Listenable {
             p2p: { iceServers: [ ] }
         };
 
-        // FIXME: remove once we have a default config template. -saghul
-        const defaultStunServers = [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
-        ];
-
         const p2pStunServers = (this.options.p2p
-            && this.options.p2p.stunServers) || defaultStunServers;
+            && this.options.p2p.stunServers) || DEFAULT_STUN_SERVERS;
 
         if (Array.isArray(p2pStunServers)) {
             logger.info('P2P STUN servers: ', p2pStunServers);
@@ -546,5 +604,92 @@ export default class XMPP extends Listenable {
         /* eslint-enable camelcase */
 
         return details;
+    }
+
+    /**
+     * Notifies speaker stats component if available that we are the new
+     * dominant speaker in the conference.
+     * @param {String} roomJid - The room jid where the speaker event occurred.
+     */
+    sendDominantSpeakerEvent(roomJid) {
+        // no speaker stats component advertised
+        if (!this.speakerStatsComponentAddress || !roomJid) {
+            return;
+        }
+
+        const msg = $msg({ to: this.speakerStatsComponentAddress });
+
+        msg.c('speakerstats', {
+            xmlns: 'http://jitsi.org/jitmeet',
+            room: roomJid })
+            .up();
+
+        this.connection.send(msg);
+    }
+
+    /**
+     * Check if the given argument is a valid JSON ENDPOINT_MESSAGE string by
+     * parsing it and checking if it has a field called 'type'.
+     *
+     * @param {string} jsonString check if this string is a valid json string
+     * and contains the special structure.
+     * @returns {boolean, object} if given object is a valid JSON string, return
+     * the json object. Otherwise, returns false.
+     */
+    tryParseJSONAndVerify(jsonString) {
+        try {
+            const json = JSON.parse(jsonString);
+
+            // Handle non-exception-throwing cases:
+            // Neither JSON.parse(false) or JSON.parse(1234) throw errors,
+            // hence the type-checking,
+            // but... JSON.parse(null) returns null, and
+            // typeof null === "object",
+            // so we must check for that, too.
+            // Thankfully, null is falsey, so this suffices:
+            if (json && typeof json === 'object') {
+                const type = json[JITSI_MEET_MUC_TYPE];
+
+                if (typeof type !== 'undefined') {
+                    return json;
+                }
+
+                logger.debug('parsing valid json but does not have correct '
+                    + 'structure', 'topic: ', type);
+            }
+        } catch (e) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * A private message is received, message that is not addressed to the muc.
+     * We expect private message coming from speaker stats component if it is
+     * enabled and running.
+     *
+     * @param {string} msg - The message.
+     */
+    _onPrivateMessage(msg) {
+        const from = msg.getAttribute('from');
+
+        if (!this.speakerStatsComponentAddress
+            || from !== this.speakerStatsComponentAddress) {
+            return;
+        }
+
+        const jsonMessage = $(msg).find('>json-message')
+            .text();
+        const parsedJson = this.tryParseJSONAndVerify(jsonMessage);
+
+        if (parsedJson
+            && parsedJson[JITSI_MEET_MUC_TYPE] === 'speakerstats'
+            && parsedJson.users) {
+            this.eventEmitter.emit(
+                XMPPEvents.SPEAKER_STATS_RECEIVED, parsedJson.users);
+        }
+
+        return true;
     }
 }

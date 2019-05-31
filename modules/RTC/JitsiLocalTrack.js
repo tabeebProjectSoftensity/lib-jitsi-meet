@@ -136,6 +136,8 @@ export default class JitsiLocalTrack extends JitsiTrack {
         // created (until getConstraints() support), however we can associate
         // tracks with real devices obtained from enumerateDevices() call as
         // soon as it's called.
+        // NOTE: this.deviceId corresponds to the device id specified in GUM constraints and this._realDeviceId seems to
+        // correspond to the id of a matching device from the available device list.
         this._realDeviceId = this.deviceId === '' ? undefined : this.deviceId;
 
         /**
@@ -145,15 +147,26 @@ export default class JitsiLocalTrack extends JitsiTrack {
          */
         this._noDataFromSourceTimeout = null;
 
-        this._onDeviceListChanged = devices => {
+        this._onDeviceListWillChange = devices => {
+            const oldRealDeviceId = this._realDeviceId;
+
             this._setRealDeviceIdFromDeviceList(devices);
 
-            // Mark track as ended for those browsers that do not support
-            // "readyState" property. We do not touch tracks created with
-            // default device ID "".
-            if (typeof this.getTrack().readyState === 'undefined'
+            if (
+                // Mark track as ended for those browsers that do not support
+                // "readyState" property. We do not touch tracks created with
+                // default device ID "".
+                (typeof this.getTrack().readyState === 'undefined'
                     && typeof this._realDeviceId !== 'undefined'
-                    && !devices.find(d => d.deviceId === this._realDeviceId)) {
+                    && !devices.find(d => d.deviceId === this._realDeviceId))
+
+                // If there was an associated realDeviceID and after the device change the realDeviceId is undefined
+                // then the associated device has been disconnected and the _trackEnded flag needs to be set. In
+                // addition on some Chrome versions the readyState property is set after the device change event is
+                // triggered which causes issues in jitsi-meet with the selection of a new device because we don't
+                // detect that the old one was removed.
+                || (typeof oldRealDeviceId !== 'undefined' && typeof this._realDeviceId === 'undefined')
+            ) {
                 this._trackEnded = true;
             }
         };
@@ -169,9 +182,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
                 this._onAudioOutputDeviceChanged);
         }
 
-        RTCUtils.addListener(
-            RTCEvents.DEVICE_LIST_CHANGED,
-            this._onDeviceListChanged);
+        RTCUtils.addListener(RTCEvents.DEVICE_LIST_WILL_CHANGE, this._onDeviceListWillChange);
 
         this._initNoDataFromSourceHandlers();
     }
@@ -182,6 +193,12 @@ export default class JitsiLocalTrack extends JitsiTrack {
      * @returns {boolean}
      */
     isEnded() {
+        if (this.isVideoTrack() && this.isMuted()) {
+            // If a video track is muted the readyState will be ended, that's why we need to rely only on the
+            // _trackEnded flag.
+            return this._trackEnded;
+        }
+
         return this.getTrack().readyState === 'ended' || this._trackEnded;
     }
 
@@ -199,7 +216,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
                     const now = window.performance.now();
 
                     this._noDataFromSourceTimeout
-                        = setTimeout(_onNoDataFromSourceError, 3000);
+                        = setTimeout(_onNoDataFromSourceError, 5000);
                     this._setHandler('track_unmute', () => {
                         this._clearNoDataFromSourceMuteResources();
                         Statistics.sendAnalyticsAndLog(
@@ -265,11 +282,22 @@ export default class JitsiLocalTrack extends JitsiTrack {
      */
     _setRealDeviceIdFromDeviceList(devices) {
         const track = this.getTrack();
-        const device = devices.find(
-            d => d.kind === `${track.kind}input` && d.label === track.label);
+        const kind = `${track.kind}input`;
+        let device = devices.find(d => d.kind === kind && d.label === track.label);
+
+        if (!device && this._realDeviceId === 'default') { // the default device has been changed.
+            // If the default device was 'A' and the default device is changed to 'B' the label for the track will
+            // remain 'Default - A' but the label for the device in the device list will be updated to 'A'. That's
+            // why in order to match it we need to remove the 'Default - ' part.
+            const label = (track.label || '').replace('Default - ', '');
+
+            device = devices.find(d => d.kind === kind && d.label === label);
+        }
 
         if (device) {
             this._realDeviceId = device.deviceId;
+        } else {
+            this._realDeviceId = undefined;
         }
     }
 
@@ -365,7 +393,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
                         // containers to something
                         // We don't want any events to be fired on this stream
                         this._unregisterHandlers();
-                        this._stopStream();
+                        this.stopStream();
                         this._setStream(null);
                         resolve();
                     },
@@ -515,12 +543,11 @@ export default class JitsiLocalTrack extends JitsiTrack {
         }
 
         if (this.stream) {
-            this._stopStream();
+            this.stopStream();
             this.detach();
         }
 
-        RTCUtils.removeListener(RTCEvents.DEVICE_LIST_CHANGED,
-            this._onDeviceListChanged);
+        RTCUtils.removeListener(RTCEvents.DEVICE_LIST_WILL_CHANGE, this._onDeviceListWillChange);
 
         if (this._onAudioOutputDeviceChanged) {
             RTCUtils.removeListener(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
@@ -666,10 +693,10 @@ export default class JitsiLocalTrack extends JitsiTrack {
     /**
      * Stops the associated MediaStream.
      */
-    _stopStream() {
+    stopStream() {
 
         /**
-         * Indicates that we are executing {@link #_stopStream} i.e.
+         * Indicates that we are executing {@link #stopStream} i.e.
          * {@link RTCUtils#stopMediaStream} for the <tt>MediaStream</tt>
          * associated with this <tt>JitsiTrack</tt> instance.
          *

@@ -19,6 +19,8 @@ import RTC from './modules/RTC/RTC';
 import TalkMutedDetection from './modules/TalkMutedDetection';
 import browser from './modules/browser';
 import ConnectionQuality from './modules/connectivity/ConnectionQuality';
+import IceFailedNotification
+    from './modules/connectivity/IceFailedNotification';
 import ParticipantConnectionStatusHandler
     from './modules/connectivity/ParticipantConnectionStatus';
 import E2ePing from './modules/e2eping/e2eping';
@@ -33,7 +35,7 @@ import GlobalOnErrorHandler from './modules/util/GlobalOnErrorHandler';
 import ComponentsVersions from './modules/version/ComponentsVersions';
 import VideoSIPGW from './modules/videosipgw/VideoSIPGW';
 import * as VideoSIPGWConstants from './modules/videosipgw/VideoSIPGWConstants';
-import { JITSI_MEET_MUC_TYPE } from './modules/xmpp/ChatRoom';
+import { JITSI_MEET_MUC_TYPE } from './modules/xmpp/xmpp';
 import * as MediaType from './service/RTC/MediaType';
 import * as RTCEvents from './service/RTC/RTCEvents';
 import VideoType from './service/RTC/VideoType';
@@ -434,6 +436,8 @@ JitsiConference.prototype.leave = function() {
         this.statistics.dispose();
     }
 
+    this._delayedIceFailed && this._delayedIceFailed.cancel();
+
     // Close both JVb and P2P JingleSessions
     if (this.jvbJingleSession) {
         this.jvbJingleSession.close();
@@ -463,17 +467,25 @@ JitsiConference.prototype.leave = function() {
             XMPPEvents.CONFERENCE_PROPERTIES_CHANGED,
             this._updateProperties);
 
+        this.eventManager.removeXMPPListeners();
+
         this.room = null;
 
-        return room.leave().catch(error => {
-            // remove all participants because currently the conference won't
-            // be usable anyway. This is done on success automatically by the
-            // ChatRoom instance.
-            this.getParticipants().forEach(
-                participant => this.onMemberLeft(participant.getJid()));
+        return room.leave()
+            .then(() => {
+                if (this.rtc) {
+                    this.rtc.destroy();
+                }
+            })
+            .catch(error => {
+                // remove all participants because currently the conference
+                // won't be usable anyway. This is done on success automatically
+                // by the ChatRoom instance.
+                this.getParticipants().forEach(
+                    participant => this.onMemberLeft(participant.getJid()));
 
-            throw error;
-        });
+                throw error;
+            });
     }
 
     // If this.room == null we are calling second time leave().
@@ -1631,7 +1643,7 @@ JitsiConference.prototype._acceptJvbIncomingCall = function(
 
     const serverRegion
         = $(jingleOffer)
-            .find('>server-region[xmlns="http://jitsi.org/protocol/focus"]')
+            .find('>bridge-session[xmlns="http://jitsi.org/protocol/focus"]')
             .attr('region');
 
     this.eventEmitter.emit(
@@ -2292,10 +2304,15 @@ JitsiConference.prototype.sendMessage = function(
         let elementName = 'body';
 
         if (messageType === 'object') {
-            try {
+            elementName = 'json-message';
+
+            // Mark as valid JSON message if not already
+            if (!messageToSend.hasOwnProperty(JITSI_MEET_MUC_TYPE)) {
                 messageToSend[JITSI_MEET_MUC_TYPE] = '';
+            }
+
+            try {
                 messageToSend = JSON.stringify(messageToSend);
-                elementName = 'json-message';
             } catch (e) {
                 logger.error('Can not send a message, stringify failed: ', e);
 
@@ -2357,6 +2374,15 @@ JitsiConference.prototype._onIceConnectionFailed = function(session) {
 
         }
         this._stopP2PSession('connectivity-error', 'ICE FAILED');
+    } else if (session && this.jvbJingleSession === session) {
+        if (this.xmpp.isPingSupported()) {
+            this._delayedIceFailed = new IceFailedNotification(this);
+            this._delayedIceFailed.start(session);
+        } else {
+            // Let Jicofo know that the JVB's ICE connection has failed
+            logger.info('PING not supported - sending ICE failed immediately');
+            session.sendIceFailedNotification();
+        }
     }
 };
 
@@ -2370,6 +2396,7 @@ JitsiConference.prototype._onIceConnectionRestored = function(session) {
         this.isP2PConnectionInterrupted = false;
     } else {
         this.isJvbConnectionInterrupted = false;
+        this._delayedIceFailed && this._delayedIceFailed.cancel();
     }
 
     if (session.isP2P === this.isP2PActive()) {

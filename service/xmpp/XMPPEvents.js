@@ -76,6 +76,12 @@ const XMPPEvents = {
      */
     ICE_RESTARTING: 'rtc.ice_restarting',
 
+    /**
+     * Event fired after the 'transport-replace' message has been processed
+     * and the new offer has been set successfully.
+     */
+    ICE_RESTART_SUCCESS: 'rtc.ice_restart_success',
+
     /* Event fired when XMPP error is returned to any request, it is meant to be
      * used to report 'signaling' errors to CallStats
      *
@@ -198,6 +204,11 @@ const XMPPEvents = {
      * packets means that most likely it has never seen our IQ.
      */
     SESSION_ACCEPT_TIMEOUT: 'xmpp.session_accept_timeout',
+
+    /**
+     * Event fired when speaker stats update message is received.
+     */
+    SPEAKER_STATS_RECEIVED: 'xmpp.speaker_stats_received',
 
     // Designates an event indicating that we should join the conference with
     // audio and/or video muted.

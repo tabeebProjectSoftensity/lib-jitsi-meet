@@ -60,6 +60,15 @@ class AnalyticsAdapter {
      * Creates new AnalyticsAdapter instance.
      */
     constructor() {
+        this.reset();
+    }
+
+    /**
+     * Reset the state to the initial one.
+     *
+     * @returns {void}
+     */
+    reset() {
         /**
          * Whether this AnalyticsAdapter has been disposed of or not. Once this
          * is set to true, the AnalyticsAdapter is disabled and does not accept
@@ -106,6 +115,15 @@ class AnalyticsAdapter {
      */
     dispose() {
         logger.warn('Disposing of analytics adapter.');
+        
+        if (this.analyticsHandlers && this.analyticsHandlers.size > 0) {
+            this.analyticsHandlers.forEach(handler => {
+                if ( typeof handler.dispose === 'function' ) {
+                    handler.dispose();
+                }
+            });
+        }
+
         this.setAnalyticsHandlers([]);
         this.disposed = true;
     }
@@ -122,6 +140,8 @@ class AnalyticsAdapter {
 
         this.analyticsHandlers = new Set(handlers);
 
+        this._setUserProperties();
+
         // Note that we disable the cache even if the set of handlers is empty.
         const cache = this.cache;
 
@@ -129,6 +149,22 @@ class AnalyticsAdapter {
         if (cache) {
             cache.forEach(event => this._sendEvent(event));
         }
+    }
+
+    /**
+     * Set the user properties to the analytics handlers.
+     *
+     * @returns {void}
+     */
+    _setUserProperties() {
+        this.analyticsHandlers.forEach(handler => {
+            try {
+                handler.setUserProperties(this.permanentProperties);
+            } catch (error) {
+                logger.warn('Error in setUserProperties method of one of the '
+                    + `analytics handlers: ${error}`);
+            }
+        });
     }
 
     /**
@@ -142,12 +178,12 @@ class AnalyticsAdapter {
      * @param {Object} properties the properties to add
      */
     addPermanentProperties(properties) {
-        for (const property in properties) {
-            if (properties.hasOwnProperty(property)) {
-                this.permanentProperties[`permanent_${property}`]
-                    = properties[property];
-            }
-        }
+        this.permanentProperties = {
+            ...this.permanentProperties,
+            ...properties
+        };
+
+        this._setUserProperties();
     }
 
     /**
@@ -305,34 +341,15 @@ class AnalyticsAdapter {
         if (this._maybeCacheEvent(event)) {
             // The event was consumed by the cache.
         } else {
-            // We append the permanent properties at the time we send the event,
-            // not at the time we receive it.
-            this._appendPermanentProperties(event);
-
-            for (const handler of this.analyticsHandlers) {
+            this.analyticsHandlers.forEach(handler => {
                 try {
                     handler.sendEvent(event);
                 } catch (e) {
                     logger.warn(`Error sending analytics event: ${e}`);
                 }
-            }
+            });
         }
     }
-
-    /**
-     * Extends an event object with the configured permanent properties.
-     * @param event the event to extend with permanent properties.
-     * @private
-     */
-    _appendPermanentProperties(event) {
-        if (!event.attributes) {
-            event.attributes = {};
-        }
-
-        event.attributes
-            = Object.assign(event.attributes, this.permanentProperties);
-    }
-
 }
 
 export default new AnalyticsAdapter();
