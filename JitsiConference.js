@@ -237,6 +237,9 @@ JitsiConference.prototype._init = function(options = {}) {
 
     const { config } = this.options;
 
+    console.warn(`XXX JitsiConference init. Name: ${this.options.name}`);
+    console.warn('XXX JitsiConference Config', config);
+
     this.room = this.xmpp.createRoom(this.options.name, config);
 
     // Connection interrupted/restored listeners
@@ -264,10 +267,12 @@ JitsiConference.prototype._init = function(options = {}) {
         this,
         config,
         (message, to) => {
+            console.warn(`XXX JitsiConference E2ePing. message: ${message}, to ${to}`);
             try {
                 this.sendMessage(
                     message, to, true /* sendThroughVideobridge */);
             } catch (error) {
+                console.warn('XXX JitsiConference E2ePing Error', error);
                 logger.warn('Failed to send a ping request or response.');
             }
         });
