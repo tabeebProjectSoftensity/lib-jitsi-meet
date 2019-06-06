@@ -684,7 +684,15 @@ export default class JitsiLocalTrack extends JitsiTrack {
             // In most cases we are showing a webcam. So if we've gotten here,
             // it should be relatively safe to assume that we are probably
             // showing the user-facing camera.
+
+            /**
+             * <TABEEB> Set default "environment" camera when a user stars a call.
+             *
+             * Original code:
+             * return CameraFacingMode.USER;
+             */
             return CameraFacingMode.ENVIRONMENT;
+            // </TABEEB>
         }
 
         return undefined;

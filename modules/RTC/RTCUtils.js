@@ -201,7 +201,15 @@ function getConstraints(um, options = {}) {
             // TODO: Maybe use "exact" syntax if options.facingMode is defined,
             // but this probably needs to be decided when updating other
             // constraints, as we currently don't use "exact" syntax anywhere.
+
+            /**
+             * <TABEEB> Set default "environment" camera when a user stars a call.
+             *
+             * Original code:
+             * const facingMode = options.facingMode || CameraFacingMode.USER;
+             */
             const facingMode = options.facingMode || CameraFacingMode.ENVIRONMENT;
+            // </TABEEB>
 
             if (isNewStyleConstraintsSupported) {
                 constraints.video.facingMode = facingMode;
@@ -370,7 +378,14 @@ function newGetConstraints(um = [], options = {}) {
         if (options.cameraDeviceId) {
             constraints.video.deviceId = options.cameraDeviceId;
         } else {
+            /**
+             * <TABEEB> Set default "environment" camera when a user stars a call.
+             *
+             * Original code:
+             * const facingMode = options.facingMode || CameraFacingMode.USER;
+             */
             const facingMode = options.facingMode || CameraFacingMode.ENVIRONMENT;
+            // </TABEEB>
 
             constraints.video.facingMode = facingMode;
         }
