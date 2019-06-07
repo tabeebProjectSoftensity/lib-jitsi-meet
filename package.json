@@ -1,6 +1,6 @@
 {
   "name": "lib-jitsi-meet",
-  "version": "3.0.0",
+  "version": "2.1.0",
   "description": "release",
   "main": "lib-jitsi-meet.min.js",
   "scripts": {
