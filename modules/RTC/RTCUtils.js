@@ -900,8 +900,6 @@ class RTCUtils extends Listenable {
      * @params {Object} options - Configuration for setting RTCUtil's instance
      * objects for peer connection constraints.
      * @params {boolean} options.useIPv6 - Set to true if IPv6 should be used.
-     * @params {boolean} options.disableSuspendVideo - Whether or not video
-     * should become suspended if bandwidth estimation becomes low.
      * @params {Object} options.testing - Additional configuration for work in
      * development.
      * @params {Object} options.testing.forceP2PSuspendVideoRatio - True if
@@ -915,7 +913,7 @@ class RTCUtils extends Listenable {
             this.pcConstraints = { optional: [
                 { googHighStartBitrate: 0 },
                 { googPayloadPadding: true },
-                { googScreencastMinBitrate: 400 },
+                { googScreencastMinBitrate: 100 },
                 { googCpuOveruseDetection: true },
                 { googCpuOveruseEncodeUsage: true },
                 { googCpuUnderuseThreshold: 55 },
@@ -929,18 +927,6 @@ class RTCUtils extends Listenable {
 
             this.p2pPcConstraints
                 = JSON.parse(JSON.stringify(this.pcConstraints));
-
-            // Allows sending of video to be suspended if the bandwidth
-            // estimation is too low.
-            if (!options.disableSuspendVideo) {
-                this.pcConstraints.optional.push(
-                    { googSuspendBelowMinBitrate: true });
-            }
-
-            // There's no reason not to use this for p2p
-            this.p2pPcConstraints.optional.push({
-                googSuspendBelowMinBitrate: true
-            });
         }
 
         this.p2pPcConstraints = this.p2pPcConstraints || this.pcConstraints;
@@ -1067,17 +1053,7 @@ class RTCUtils extends Listenable {
                 new Error('Desktop sharing is not supported!'));
         }
 
-        let gumPromise;
-
-        if (browser.supportsMediaStreamConstructor()) {
-            gumPromise = this._getAudioAndVideoStreams(options);
-        } else {
-            // If the MediaStream constructor is not supported, then get tracks
-            // in separate GUM calls in order to keep different tracks separate.
-            gumPromise = this._getAudioAndVideoStreamsSeparately(options);
-        }
-
-        return gumPromise.then(streams =>
+        return this._getAudioAndVideoStreams(options).then(streams =>
             handleLocalStream(streams, options.resolution));
     }
 
@@ -1185,37 +1161,6 @@ class RTCUtils extends Listenable {
         }
 
         return missingDevices;
-    }
-
-    /**
-     * Performs separate getUserMedia calls for audio and video instead of in
-     * one call. Will also request desktop if specified.
-     *
-     * @param {Object} options - An object describing how the gUM request should
-     * be executed. See {@link obtainAudioAndVideoPermissions} for full options.
-     * @returns {*} Promise object that will receive the new JitsiTracks on
-     * success or a JitsiTrackError on failure.
-     */
-    _getAudioAndVideoStreamsSeparately(options) {
-        return new Promise((resolve, reject) => {
-            const deviceGUM = {
-                audio: (...args) =>
-                    this.getUserMediaWithConstraints([ 'audio' ], ...args),
-                video: (...args) =>
-                    this.getUserMediaWithConstraints([ 'video' ], ...args),
-                desktop: (...args) =>
-                    screenObtainer.obtainStream(
-                        this._parseDesktopSharingOptions(options), ...args)
-            };
-
-            obtainDevices({
-                options,
-                streams: {},
-                successCallback: resolve,
-                errorCallback: reject,
-                deviceGUM
-            });
-        });
     }
 
     /**
@@ -1412,7 +1357,8 @@ class RTCUtils extends Listenable {
 
                 mediaStreamsMetaData.push({
                     stream: audioStream,
-                    track: audioStream.getAudioTracks()[0]
+                    track: audioStream.getAudioTracks()[0],
+                    effects: options.effects
                 });
             }
 
@@ -1424,7 +1370,8 @@ class RTCUtils extends Listenable {
                 mediaStreamsMetaData.push({
                     stream: videoStream,
                     track: videoStream.getVideoTracks()[0],
-                    videoType: VideoType.CAMERA
+                    videoType: VideoType.CAMERA,
+                    effects: options.effects
                 });
             }
         };
@@ -1602,32 +1549,6 @@ class RTCUtils extends Listenable {
 }
 
 const rtcUtils = new RTCUtils();
-
-/**
- *
- * @param context Execution context, containing options and callbacks
- */
-function obtainDevices(context) {
-    if (!context.options.devices || context.options.devices.length === 0) {
-        return context.successCallback(context.streams || {});
-    }
-
-    const device = context.options.devices.splice(0, 1);
-
-    context.deviceGUM[device](context.options)
-        .then(stream => {
-            context.streams = context.streams || {};
-            context.streams[device] = stream;
-            obtainDevices(context);
-        }, error => {
-            Object.keys(context.streams).forEach(
-                d => rtcUtils.stopMediaStream(context.streams[d]));
-            logger.error(
-                `failed to obtain ${device} stream - stop`, error);
-
-            context.errorCallback(error);
-        });
-}
 
 /**
  * Wraps original attachMediaStream function to set current audio output device

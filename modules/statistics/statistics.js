@@ -73,7 +73,8 @@ function _initCallStatsBackend(options) {
         aliasName: options.swapUserNameAndAlias
             ? userName : options.callStatsAliasName,
         applicationName: options.applicationName,
-        getWiFiStatsMethod: options.getWiFiStatsMethod
+        getWiFiStatsMethod: options.getWiFiStatsMethod,
+        confID: options.confID
     })) {
         logger.error('CallStats Backend initialization failed bad');
     }
@@ -131,6 +132,7 @@ Statistics.init = function(options) {
  * initializing callstats.
  * @property {string} callStatsConfIDNamespace - A namespace to prepend the
  * callstats conference ID with.
+ * @property {string} confID - The callstats conference ID to use.
  * @property {string} callStatsID - Callstats credentials - the id.
  * @property {string} callStatsSecret - Callstats credentials - the secret.
  * @property {string} customScriptUrl - A custom lib url to use when downloading
@@ -168,6 +170,10 @@ export default function Statistics(xmpp, options) {
             _initCallStatsBackend(this.options);
         } else {
             loadCallStatsAPI(this.options);
+        }
+
+        if (!this.options.confID) {
+            logger.warn('"confID" is not defined');
         }
 
         if (!this.options.callStatsConfIDNamespace) {
@@ -684,15 +690,20 @@ Statistics.sendLog = function(m) {
  *
  * @param overall an integer between 1 and 5 indicating the user's rating.
  * @param comment the comment from the user.
+ * @returns {Promise} Resolves when callstats feedback has been submitted
+ * successfully.
  */
 Statistics.prototype.sendFeedback = function(overall, comment) {
-    CallStats.sendFeedback(this._getCallStatsConfID(), overall, comment);
+    // Statistics.analytics.sendEvent is currently fire and forget, without
+    // confirmation of successful send.
     Statistics.analytics.sendEvent(
         FEEDBACK,
         {
             rating: overall,
             comment
         });
+
+    return CallStats.sendFeedback(this._getCallStatsConfID(), overall, comment);
 };
 
 Statistics.LOCAL_JID = require('../../service/statistics/constants').LOCAL_JID;

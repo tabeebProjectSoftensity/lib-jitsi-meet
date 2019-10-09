@@ -1,6 +1,9 @@
 /* global __dirname */
 
 const process = require('process');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+
+const analyzeBundle = process.argv.indexOf('--analyze-bundle') !== -1;
 
 const minimize
     = process.argv.indexOf('-p') !== -1
@@ -61,7 +64,19 @@ const config = {
         filename: `[name]${minimize ? '.min' : ''}.js`,
         path: process.cwd(),
         sourceMapFilename: `[name].${minimize ? 'min' : 'js'}.map`
-    }
+    },
+    performance: {
+        hints: minimize ? 'error' : false,
+        maxAssetSize: 750 * 1024,
+        maxEntrypointSize: 750 * 1024
+    },
+    plugins: [
+        analyzeBundle
+            && new BundleAnalyzerPlugin({
+                analyzerMode: 'disabled',
+                generateStatsFile: true
+            })
+    ].filter(Boolean)
 };
 
 module.exports = [

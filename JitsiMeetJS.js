@@ -273,11 +273,23 @@ export default _mergeNamespaceAndModule({
     },
 
     /**
+    * Sets global options which will be used by all loggers. Changing these
+    * works even after other loggers are created.
+    *
+    * @param options
+    * @see Logger.setGlobalOptions
+    */
+    setGlobalLogOptions(options) {
+        Logger.setGlobalOptions(options);
+    },
+
+    /**
      * Creates the media tracks and returns them trough the callback.
      *
      * @param options Object with properties / settings specifying the tracks
      * which should be created. should be created or some additional
      * configurations about resolution for example.
+     * @param {Array} options.effects optional effects array for the track
      * @param {Array} options.devices the devices that will be requested
      * @param {string} options.resolution resolution constraints
      * @param {string} options.cameraDeviceId
