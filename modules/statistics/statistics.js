@@ -400,10 +400,16 @@ Statistics._getAllCallStatsInstances = function() {
  * @private
  */
 Statistics.prototype._getCallStatsConfID = function() {
-    // The conference ID is case sensitive!!!
-    return this.options.callStatsConfIDNamespace
-        ? `${this.options.callStatsConfIDNamespace}/${this.options.roomName}`
-        : this.options.roomName;
+    /**
+     * <TABEEB> Remove Namespace from CallStatsConfID
+     *
+     * Original code:
+     * return this.options.callStatsConfIDNamespace
+     *  ? `${this.options.callStatsConfIDNamespace}/${this.options.roomName}`
+     *  : this.options.roomName;
+     */
+    return this.options.roomName;
+    // </TABEEB>
 };
 
 /**
